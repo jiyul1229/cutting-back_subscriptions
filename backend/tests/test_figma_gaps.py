@@ -128,7 +128,7 @@ class FigmaGapApiTests(LiveApiTestCase):
         other_etc = self.create_subscription(name="통신비", category="etc")["id"]
         third_etc = self.create_subscription(name="클라우드", category="etc", price_won=3000)["id"]
         for sid in (other_etc, third_etc):
-            for _ in range(2):  # 미사용(1회 이하)이 아니게 해서 중복 여부만 확인
+            for _ in range(3):  # 미사용(90일 2회 이하)이 아니게 해서 중복 여부만 확인
                 self.request("POST", f"/api/subscriptions/{sid}/usage-logs", {}, 201)
         for sid in (insurance["id"], other_etc, third_etc):
             self.age(sid, 40)
@@ -150,6 +150,22 @@ class FigmaGapApiTests(LiveApiTestCase):
         self.assertEqual(self.request("GET", "/api/subscriptions")[0]["latest_decision"], "keep")
         self.assertEqual(self.request("GET", "/api/dashboard")["subscriptions"][0]["latest_decision"], "keep")
         self.assertEqual(self.request("PATCH", detail, {"memo": "x"})["latest_decision"], "keep")
+
+    def test_low_usage_is_two_uses_in_90_days(self):
+        def sub_with_uses(name, days_ago_list):
+            sid = self.create_subscription(name=name, category=name)["id"]  # 카테고리 달리해서 중복 제외
+            self.age(sid, 120)
+            for days_ago in days_ago_list:
+                self.request("POST", f"/api/subscriptions/{sid}/usage-logs",
+                             {"used_date": (today() - timedelta(days=days_ago)).isoformat()}, 201)
+            return sid
+        two = sub_with_uses("two", [0, 89])           # 2회 → 미사용
+        three = sub_with_uses("three", [0, 1, 89])    # 3회 → 아님
+        outside = sub_with_uses("outside", [0, 1, 90])  # 90일 전 기록은 기간 밖 → 2회 → 미사용
+        items = {i["subscription_id"]: i for i in self.request("GET", "/api/analytics/recommendations")["items"]}
+        self.assertEqual(set(items), {two, outside})
+        self.assertEqual((items[two]["usage_count_90d"], items[outside]["usage_count_90d"]), (2, 2))
+        self.assertNotIn(three, items)
 
     def test_new_subscription_is_not_low_usage(self):
         self.create_subscription()

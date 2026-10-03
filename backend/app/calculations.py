@@ -9,8 +9,10 @@ BUSINESS_TZ = timezone(timedelta(hours=9))  # 한국 날짜, 별도 tzdata 의�
 USAGE_WINDOWS = (7, 30, 90)
 COMPARISON_DAYS = 30
 INACTIVITY_DAYS = 7
-# 해지 추천: 관찰 30일 이상이고 최근 30일 이용이 이 횟수 이하이면 미사용으로 봅니다.
-LOW_USAGE_MAX_COUNT_30D = 1
+# 해지 추천(미사용): 관찰 30일 이상이고 최근 90일 이용이 2회 이하. 앱 코어 엔진과 같은 기준입니다.
+LOW_USAGE_WINDOW_DAYS = 90
+LOW_USAGE_MAX_COUNT = 2
+LOW_USAGE_MIN_OBSERVATION_DAYS = 30
 # 사용자가 유지/보류를 결정하면 이 기간 동안 같은 구독을 다시 추천하지 않습니다.
 RECOMMENDATION_SNOOZE_DAYS = 30
 USAGE_EVALUATION_DAYS = int(os.environ.get("USAGE_EVALUATION_DAYS", "30"))

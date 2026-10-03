@@ -1,7 +1,7 @@
 """해지 추천 계산. 결과는 저장하지 않고 조회할 때마다 계산합니다.
 
 추천 이유
-- low_usage: 관찰 30일 이상인데 최근 30일 이용이 LOW_USAGE_MAX_COUNT_30D회 이하
+- low_usage: 관찰 30일 이상인데 최근 90일 이용이 2회 이하 (LOW_USAGE_* 상수)
 - duplicate_category: 같은 카테고리의 활성 구독이 2개 이상일 때, 가장 많이 쓰는 1개를 빼고 나머지
   (이용 횟수가 같으면 더 싼 것을 남깁니다). '기타'(etc)는 서로 다른 서비스 묶음이라 제외합니다.
 
@@ -17,7 +17,8 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.calculations import (
-    BUSINESS_TZ, COMPARISON_DAYS, LOW_USAGE_MAX_COUNT_30D, RECOMMENDATION_SNOOZE_DAYS,
+    BUSINESS_TZ, LOW_USAGE_MAX_COUNT, LOW_USAGE_MIN_OBSERVATION_DAYS, LOW_USAGE_WINDOW_DAYS,
+    RECOMMENDATION_SNOOZE_DAYS,
     business_date, today,
 )
 from app.models import DecisionHistory, Subscription, UsageLog
@@ -51,7 +52,7 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
 
     usage = {row[0]: (row[1], row[2]) for row in db.execute(select(
         UsageLog.subscription_id,
-        func.count(case((UsageLog.used_date >= current - timedelta(days=COMPARISON_DAYS - 1), 1))),
+        func.count(case((UsageLog.used_date >= current - timedelta(days=LOW_USAGE_WINDOW_DAYS - 1), 1))),
         func.min(UsageLog.used_date),
     ).where(
         UsageLog.subscription_id.in_(ids), UsageLog.used_date <= current
@@ -68,15 +69,15 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
     )))
 
     reasons: dict[int, list[str]] = defaultdict(list)
-    count_30d = {}
+    recent_count = {}
     for subscription in subscriptions:
         count, earliest = usage.get(subscription.id, (0, None))
-        count_30d[subscription.id] = count
+        recent_count[subscription.id] = count
         start = business_date(subscription.created_at)
         if earliest is not None and earliest < start:
             start = earliest
         observation = (current - start).days + 1
-        if observation >= COMPARISON_DAYS and count <= LOW_USAGE_MAX_COUNT_30D:
+        if observation >= LOW_USAGE_MIN_OBSERVATION_DAYS and count <= LOW_USAGE_MAX_COUNT:
             reasons[subscription.id].append("low_usage")
 
     groups: dict[str, list[Subscription]] = defaultdict(list)
@@ -88,7 +89,7 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
     for members in groups.values():
         if len(members) < 2:
             continue
-        keep = min(members, key=lambda s: (-count_30d[s.id], s.price_won, s.id))
+        keep = min(members, key=lambda s: (-recent_count[s.id], s.price_won, s.id))
         for member in members:
             duplicate_with[member.id] = [other.id for other in members if other.id != member.id]
             if member.id != keep.id:
@@ -98,7 +99,7 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
         RecommendationItem(
             subscription_id=subscription.id, name=subscription.name, category=subscription.category,
             price_won=subscription.price_won, billing_cycle=subscription.billing_cycle,
-            reasons=reasons[subscription.id], usage_count_30d=count_30d[subscription.id],
+            reasons=reasons[subscription.id], usage_count_90d=recent_count[subscription.id],
             duplicate_with=duplicate_with.get(subscription.id, []),
             monthly_saving_won=monthly_saving(subscription),
             yearly_saving_won=yearly_saving(subscription),

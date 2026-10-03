@@ -401,7 +401,7 @@ class RecommendationItem(BaseModel):
     price_won: int
     billing_cycle: BillingCycle
     reasons: list[RecommendationReason]
-    usage_count_30d: int
+    usage_count_90d: int
     # 같은 카테고리의 다른 활성 구독 (duplicate_category일 때)
     duplicate_with: list[int]
     monthly_saving_won: int
