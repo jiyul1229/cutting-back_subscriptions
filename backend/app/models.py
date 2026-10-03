@@ -137,7 +137,7 @@ class PaymentRecord(Base):
 class DecisionHistory(Base):
     __tablename__ = "decision_history"
     __table_args__ = (
-        CheckConstraint("decision IN ('keep', 'cancel', 'hold')", name="ck_decision"),
+        CheckConstraint("decision IN ('keep', 'cancel', 'hold', 'none')", name="ck_decision"),
         Index("ix_decision_subscription_time", "subscription_id", "decided_at"),
     )
 

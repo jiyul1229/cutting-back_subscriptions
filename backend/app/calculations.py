@@ -8,7 +8,6 @@ from app.models import Subscription, utc_now
 BUSINESS_TZ = timezone(timedelta(hours=9))  # 한국 날짜, 별도 tzdata 의존성 불필요
 USAGE_WINDOWS = (7, 30, 90)
 COMPARISON_DAYS = 30
-INACTIVITY_DAYS = 7
 # 해지 권장 기간: 다음 결제일 CANCEL_WINDOW_DAYS일 전부터 하루 전까지 (앱 코어 엔진과 같은 기준)
 CANCEL_WINDOW_DAYS = 5
 # 메모에 이런 표현이 있으면 해지 추천 이유로 덧붙입니다.
@@ -48,6 +47,13 @@ def scheduled_date(subscription: Subscription, year: int, month: int) -> date | 
         return None
     day = min(subscription.billing_day, calendar.monthrange(year, month)[1])
     return date(year, month, day)
+
+
+def monthly_amount(subscription: Subscription) -> int:
+    """월 환산 금액. 연간 구독은 요금/12(반올림). 앱의 monthlyAmount와 같습니다."""
+    if subscription.billing_cycle == "yearly":
+        return round(subscription.price_won / 12)
+    return subscription.price_won
 
 
 def cancel_window(subscription: Subscription, on_date: date) -> tuple[date, date]:

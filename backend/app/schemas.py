@@ -15,7 +15,9 @@ UsageSource = Literal["manual", "mobile_auto", "notification"]
 ManualUsageSource = Literal["manual", "notification"]
 UsageDevice = Literal["phone", "tablet", "tv", "pc", "other"]
 PaymentSource = Literal["manual", "auto"]
-Decision = Literal["keep", "cancel", "hold"]
+# none은 태그 해제. 기록은 남지만 최근 결정은 null이 됩니다.
+Decision = Literal["keep", "cancel", "hold", "none"]
+TagDecision = Literal["keep", "cancel", "hold"]
 RecommendationReason = Literal["low_usage", "duplicate_category", "negative_memo"]
 ReminderDays = Annotated[int, Field(ge=0, le=365, strict=True)]
 PositiveId = Annotated[int, Field(gt=0, strict=True, le=9223372036854775807)]
@@ -152,7 +154,7 @@ class SubscriptionResponse(BaseModel):
     cancel_window_start: date | None = None
     cancel_window_end: date | None = None
     # 가장 최근 결정(유지/해지/보류). 기록이 없으면 null. 구독 상태(status)를 바꾸지는 않습니다.
-    latest_decision: Decision | None = None
+    latest_decision: TagDecision | None = None
 
 
 class LegacyCheckInCreate(BaseModel):
@@ -396,10 +398,9 @@ class CategoryAnalysisResponse(BaseModel):
 class NotificationCandidate(BaseModel):
     subscription_id: int
     name: str
-    type: Literal["renewal", "cancel_window", "no_usage", "recommendation"]
+    type: Literal["renewal", "cancel_window", "recommendation"]
     next_renewal_date: date | None = None
     d_day: int | None = None
-    days_without_usage: int | None = None
     reasons: list[RecommendationReason] | None = None
 
 

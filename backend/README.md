@@ -4,6 +4,19 @@ Python 3.10+, FastAPI, SQLite, SQLAlchemy 2.x, Pydantic 2.x.
 Expo React Native/TypeScript에서 호출하는 single-user MVP입니다.
 홈·캘린더·분석은 원천 데이터로 계산하며 화면별 테이블을 만들지 않습니다.
 
+## 발표용 예시 데이터
+
+빈 DB에 예시 구독 8개, 최근 5개월 결제, 최근 90일 이용 기록을 넣습니다(오늘 날짜 기준).
+
+```powershell
+py -3 -m app.seed_demo                      # 기본 DB(subscriptions.db)
+py -3 -m app.seed_demo --database demo.db   # 다른 DB 파일
+```
+
+해지 추천은 넷플릭스·리디셀렉트, 절약 가능 금액은 월 26,900원 / 연 322,800원으로 Figma 시안과 같습니다.
+이미 구독이 있으면 넣지 않습니다. 다시 넣으려면 새 DB 파일을 쓰거나 `POST /api/settings/reset-data`로 비웁니다.
+서버를 그 DB로 켜려면 `SUBSCRIPTION_DB_PATH`를 같은 파일로 지정합니다.
+
 ## 설치와 실행
 
 Windows PowerShell, 프로젝트 루트:
@@ -102,6 +115,7 @@ app/
   recommendations.py      # 해지 추천 계산 (미사용 + 같은 카테고리 중복)
   decision_state.py       # 구독별 최근 결정(유지/해지/보류 태그)
   migrate.py              # 명시적 백업/변환/검증/교체
+  seed_demo.py            # 발표용 예시 데이터
   routers/
     __init__.py
     dependencies.py       # 공통 세션/ID/기간 검증
@@ -278,11 +292,11 @@ cancel_window_start/cancel_window_end는 해지 권장 기간(다음 결제일 5
 
 위 예는 한국 날짜 2026-09-30 기준입니다.
 활성 구독만 포함하며 next_renewal_date, id 순으로 정렬합니다.
-monthly_total_won은 **이번 달 전체의 현재 활성 구독 예상 청구액**입니다.
-월간은 전액, 연간은 결제 월에만 전액 포함합니다. 연간 가격/12 방식이 아니며 남은 날짜의 금액만 더하는 것도 아닙니다.
+monthly_total_won은 **현재 활성 구독의 월 환산 합계**입니다(앱의 totalMonthly와 같음).
+월간은 요금 그대로, 연간은 요금/12(반올림)를 더합니다. 남은 날짜의 금액만 더하는 것은 아닙니다.
 실제 결제 유무와 include_in_analysis는 홈 금액에 영향을 주지 않습니다.
 중도 가입/해지 일할 계산은 없으며 실지출과 구분해야 합니다.
-**전월 대비**는 이번 달 예상 구독료와 지난달 실제 결제 합계(분석 제외·해지·삭제 구독 포함)를 비교합니다.
+**전월 대비**는 이번 달 월 환산 구독료와 지난달 실제 결제 합계(분석 제외·해지·삭제 구독 포함)를 비교합니다.
 change_ratio는 비율(0.082803 = 8.3% 증가, 음수면 감소)입니다. 지난달 결제가 없으면 세 값 모두 null입니다.
 없으면 total=0, count=0, subscriptions=[]입니다.
 
@@ -475,7 +489,8 @@ POST /api/subscriptions/1/decisions:
 {"decision":"hold","memo":"다음 달에 다시 확인"}
 ```
 
-keep/cancel/hold만 허용합니다(앱의 유지/해지/보류 태그). 이전 DB의 postpone은 마이그레이션 때 hold로 바꿉니다. decided_at은 서버 UTC 현재 시각입니다.
+keep/cancel/hold/none만 허용합니다(앱의 유지/해지/보류 태그, none은 태그 해제).
+none을 기록하면 이력은 남고 latest_decision은 null이 됩니다. 이전 DB의 postpone은 마이그레이션 때 hold로 바꿉니다. decided_at은 서버 UTC 현재 시각입니다.
 응답은 id, subscription_id, decision, decided_at, memo.
 조회는 decided_at/id 내림차순입니다.
 결정 이력은 Subscription.status를 자동 변경하지 않습니다.
@@ -508,16 +523,15 @@ GET /api/notifications는 현재 조회 시점의 알림 후보 배열입니다.
 - active + 서비스별 notification_enabled=true인 구독만 대상.
 - renewal: 오늘부터 다음 갱신일까지 0~renewal_reminder_days일(기본 3일)이면 후보(당일 포함).
 - cancel_window: renewal이 아니면서 다음 결제일이 1~5일 남았으면 해지 권장 기간 후보.
-- no_usage: 마지막 used_date로부터 7일 이상 경과하면 후보.
-- 이용 기록이 전혀 없으면 구독 등록일로부터 7일 경과 후 후보.
 - recommendation: 해지 추천 대상이면 후보(reasons에 이유). recommendation_enabled=false면 제외.
 - '해지' 태그를 붙인 구독은 어떤 알림도 만들지 않습니다.
 - 하나의 구독이 여러 종류 후보를 동시에 가질 수 있음.
 - 서버는 Push/예약 작업/읽음 처리/발송 이력/중복 발송 방지를 구현하지 않음.
 
-응답 항목은 subscription_id, name, type, next_renewal_date, d_day, days_without_usage, reasons입니다.
+응답 항목은 subscription_id, name, type, next_renewal_date, d_day, reasons입니다.
 해당 종류와 관계없는 필드는 null입니다.
-추천 OFF는 사실 기반 renewal/no_usage 후보를 끄지 않습니다.
+추천 OFF는 renewal/cancel_window 후보를 끄지 않습니다.
+7일 미사용 알림(no_usage)은 해지 추천 알림과 겹쳐 삭제했습니다. 오래 안 쓴 구독은 recommendation으로 알립니다.
 서비스명 숨기기 설정(hide_service_names)은 디자인에 없어 삭제했습니다. 이전 DB는 마이그레이션 때 컬럼을 버립니다.
 
 ## Android 자동 감지 연동
@@ -610,7 +624,7 @@ DB 삭제 후 재생성은 기본 절차가 아닙니다. 데이터가 불필요
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-56개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
+61개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
 기존 12개 테스트 범위를 유지하고 checked_at → used_date, 추가 응답 필드, DELETE CORS 허용 변경에 맞춰 검증을 수정했습니다.
 새 검증은 월말/윤년/연간 갱신, D-day와 정렬, 동일 날짜 예정+실제, 설정/알림 경계,
 manual/mobile_auto/notification, 과거일/수정/삭제/필터, 7/30/90일과 30/60일 관찰 경계,

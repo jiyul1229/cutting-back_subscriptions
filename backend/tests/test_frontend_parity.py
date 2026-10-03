@@ -113,6 +113,24 @@ class FrontendParityTests(LiveApiTestCase):
         pricey = self.sub_with_uses("pricey", "ott", 13900, 3)
         self.assertEqual(set(self.recommended()), {pricey})
 
+    def test_clear_tag_with_none(self):
+        sid = self.create_subscription(renewal_reminder_days=365)["id"]
+        root = f"/api/subscriptions/{sid}"
+        self.request("POST", root + "/decisions", {"decision": "cancel"}, 201)
+        self.assertEqual(self.request("GET", root)["latest_decision"], "cancel")
+        self.assertEqual(self.notices(sid), [])  # 해지 태그면 알림 없음
+        cleared = self.request("POST", root + "/decisions", {"decision": "none"}, 201)
+        self.assertEqual(cleared["decision"], "none")
+        self.assertIsNone(self.request("GET", root)["latest_decision"])
+        self.assertEqual(self.notices(sid), ["renewal"])  # 태그를 풀면 다시 알림
+        self.assertEqual(len(self.request("GET", root + "/decisions")), 2)  # 이력은 남음
+
+    def test_home_total_is_monthly_equivalent(self):
+        self.create_subscription(price_won=10000)
+        self.create_subscription(name="연간", price_won=120000, billing_cycle="yearly",
+                                 billing_month=12, billing_day=1)
+        self.assertEqual(self.request("GET", "/api/dashboard")["monthly_total_won"], 10000 + 10000)
+
     def test_reset_data(self):
         sid = self.create_subscription()["id"]
         self.request("POST", f"/api/subscriptions/{sid}/usage-logs", {}, 201)

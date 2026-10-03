@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.calculations import (
     BUSINESS_TZ, LOW_USAGE_MAX_COUNT, NEGATIVE_MEMO_KEYWORDS, LOW_USAGE_MIN_OBSERVATION_DAYS, LOW_USAGE_WINDOW_DAYS,
     RECOMMENDATION_SNOOZE_DAYS,
-    business_date, today,
+    business_date, monthly_amount, today,
 )
 from app.decision_state import cancel_tagged
 from app.models import DecisionHistory, Subscription, UsageLog
@@ -34,9 +34,7 @@ DUPLICATE_MIN_GROUP_SIZE = 3
 
 
 def monthly_saving(subscription: Subscription) -> int:
-    if subscription.billing_cycle == "yearly":
-        return round(subscription.price_won / 12)
-    return subscription.price_won
+    return monthly_amount(subscription)
 
 
 def yearly_saving(subscription: Subscription) -> int:

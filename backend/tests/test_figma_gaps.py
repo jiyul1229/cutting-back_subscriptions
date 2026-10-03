@@ -134,7 +134,7 @@ class FigmaGapApiTests(LiveApiTestCase):
             self.age(sid, 40)
         self.assertEqual(self.request("GET", "/api/analytics/recommendations")["items"], [])
         notice_types = {(n["subscription_id"], n["type"]) for n in self.request("GET", "/api/notifications")}
-        self.assertNotIn((insurance["id"], "no_usage"), notice_types)
+        self.assertNotIn((insurance["id"], "recommendation"), notice_types)
         checks = [i["subscription_id"] for i in self.request("GET", "/api/usage-checks")["items"]]
         self.assertNotIn(insurance["id"], checks)
         self.request("PATCH", f"/api/subscriptions/{insurance['id']}", {"track_usage": None}, 422)

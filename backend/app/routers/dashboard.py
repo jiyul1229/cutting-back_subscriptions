@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 
 from app.decision_state import latest_decisions
 from app.calculations import (
-    cancel_window, month_bounds, month_shift, next_renewal, scheduled_date, today,
+    cancel_window, month_bounds, month_shift, monthly_amount, next_renewal, today,
 )
 from app.models import PaymentRecord, Subscription
 from app.routers.dependencies import SyncedSession
@@ -28,8 +28,7 @@ def get_dashboard(db: SyncedSession):
     for subscription in subscriptions:
         upcoming = next_renewal(subscription, current)
         window_start, window_end = cancel_window(subscription, current)
-        if scheduled_date(subscription, current.year, current.month) is not None:
-            total += subscription.price_won
+        total += monthly_amount(subscription)
         items.append(DashboardSubscription(**{
             **SubscriptionResponse.model_validate(subscription).model_dump(),
             "next_renewal_date": upcoming, "d_day": (upcoming - current).days,
@@ -37,7 +36,7 @@ def get_dashboard(db: SyncedSession):
             "cancel_window_start": window_start, "cancel_window_end": window_end,
         }))
     items.sort(key=lambda item: (item.next_renewal_date, item.id))
-    # 전월 대비: 이번 달 예상 구독료와 지난달 실제 결제액(분석 제외·해지·삭제 구독 포함)을 비교합니다.
+    # 이번 달 구독료는 월 환산 합계(연간은 /12). 전월 대비는 지난달 실제 결제액(분석 제외·해지·삭제 구독 포함)과 비교합니다.
     start, end = month_bounds(*month_shift(current.year, current.month, -1))
     previous = db.scalar(select(func.sum(PaymentRecord.amount_won)).where(
         PaymentRecord.paid_date >= start, PaymentRecord.paid_date <= end
