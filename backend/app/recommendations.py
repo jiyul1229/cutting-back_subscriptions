@@ -1,7 +1,7 @@
 """해지 추천 계산. 결과는 저장하지 않고 조회할 때마다 계산합니다.
 
 추천 이유
-- low_usage: 관찰 30일 이상인데 최근 90일 이용이 2회 이하 (LOW_USAGE_* 상수)
+- low_usage: 최근 N일 이용이 M회 이하 (설정값, 기본 90일 2회). 관찰 기간이 min(30일, N일)보다 짧으면 판단하지 않음
 - duplicate_category: 같은 카테고리의 활성 구독이 3개 이상일 때, 최근 90일 이용이 가장 적은 1개
   (같으면 더 비싼 것). '기타'(etc)는 서로 다른 서비스 묶음이라 제외합니다.
 
@@ -23,7 +23,7 @@ from app.calculations import (
     business_date, monthly_amount, today,
 )
 from app.decision_state import cancel_tagged
-from app.models import DecisionHistory, Subscription, UsageLog
+from app.models import AppSettings, DecisionHistory, Subscription, UsageLog
 from app.schemas import RecommendationItem
 
 
@@ -43,14 +43,25 @@ def yearly_saving(subscription: Subscription) -> int:
     return subscription.price_won * 12
 
 
-def cost_per_use(subscription: Subscription, uses_90d: int) -> int | None:
-    if uses_90d == 0:
+def cost_per_use(subscription: Subscription, uses: int, window_days: int) -> int | None:
+    """월 요금 ÷ 한 달(30일) 평균 이용 횟수. 90일이면 앱 엔진의 '월 요금 ÷ (90일 이용/3)'과 같습니다."""
+    if uses == 0:
         return None
-    return round(monthly_saving(subscription) / (uses_90d / 3))
+    return round(monthly_saving(subscription) / (uses * 30 / window_days))
+
+
+def criteria(db: Session) -> tuple[int, int]:
+    """(판단 기간 일수, 최대 이용 횟수). 설정이 없으면 기본값."""
+    settings = db.get(AppSettings, 1)
+    if settings is None:
+        return LOW_USAGE_WINDOW_DAYS, LOW_USAGE_MAX_COUNT
+    return settings.low_usage_window_days, settings.low_usage_max_count
 
 
 def build_recommendations(db: Session, current: date | None = None) -> list[RecommendationItem]:
     current = current or today()
+    window_days, max_count = criteria(db)
+    min_observation = min(LOW_USAGE_MIN_OBSERVATION_DAYS, window_days)
     subscriptions = list(db.scalars(select(Subscription).where(
         Subscription.status == "active", Subscription.track_usage.is_(True)
     ).order_by(Subscription.id)))
@@ -60,7 +71,7 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
 
     usage = {row[0]: (row[1], row[2]) for row in db.execute(select(
         UsageLog.subscription_id,
-        func.count(case((UsageLog.used_date >= current - timedelta(days=LOW_USAGE_WINDOW_DAYS - 1), 1))),
+        func.count(case((UsageLog.used_date >= current - timedelta(days=window_days - 1), 1))),
         func.min(UsageLog.used_date),
     ).where(
         UsageLog.subscription_id.in_(ids), UsageLog.used_date <= current
@@ -91,7 +102,7 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
         if earliest is not None and earliest < start:
             start = earliest
         observation = (current - start).days + 1
-        if observation >= LOW_USAGE_MIN_OBSERVATION_DAYS and count <= LOW_USAGE_MAX_COUNT:
+        if observation >= min_observation and count <= max_count:
             reasons[subscription.id].append("low_usage")
             if subscription.id in negative:
                 reasons[subscription.id].append("negative_memo")
@@ -116,9 +127,10 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
         RecommendationItem(
             subscription_id=subscription.id, name=subscription.name, category=subscription.category,
             price_won=subscription.price_won, billing_cycle=subscription.billing_cycle,
-            reasons=reasons[subscription.id], usage_count_90d=recent_count[subscription.id],
+            reasons=reasons[subscription.id], recent_usage_count=recent_count[subscription.id],
+            window_days=window_days,
             duplicate_with=duplicate_with.get(subscription.id, []),
-            cost_per_use_won=cost_per_use(subscription, recent_count[subscription.id]),
+            cost_per_use_won=cost_per_use(subscription, recent_count[subscription.id], window_days),
             monthly_saving_won=monthly_saving(subscription),
             yearly_saving_won=yearly_saving(subscription),
         )

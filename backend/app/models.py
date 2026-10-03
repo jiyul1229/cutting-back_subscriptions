@@ -158,6 +158,8 @@ class AppSettings(Base):
             "length(usage_check_time) = 5 AND substr(usage_check_time, 3, 1) = ':'",
             name="ck_usage_check_time",
         ),
+        CheckConstraint("low_usage_window_days BETWEEN 7 AND 365", name="ck_low_usage_window"),
+        CheckConstraint("low_usage_max_count BETWEEN 0 AND 100", name="ck_low_usage_max_count"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
@@ -168,3 +170,6 @@ class AppSettings(Base):
     # TV·태블릿 시청을 기록하기 위한 매일 이용 확인 알림.
     usage_check_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     usage_check_time: Mapped[str] = mapped_column(String, default="21:00")
+    # 해지 추천(미사용) 기준: 최근 low_usage_window_days일 동안 low_usage_max_count회 이하
+    low_usage_window_days: Mapped[int] = mapped_column(Integer, default=90)
+    low_usage_max_count: Mapped[int] = mapped_column(Integer, default=2)

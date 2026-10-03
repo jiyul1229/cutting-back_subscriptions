@@ -332,6 +332,8 @@ class SettingsResponse(BaseModel):
     auto_tracking_enabled: bool
     usage_check_enabled: bool
     usage_check_time: str
+    low_usage_window_days: int
+    low_usage_max_count: int
 
 
 class SettingsUpdate(BaseModel):
@@ -341,9 +343,13 @@ class SettingsUpdate(BaseModel):
     auto_tracking_enabled: StrictBool | None = None
     usage_check_enabled: StrictBool | None = None
     usage_check_time: ClockTime | None = None
+    # 해지 추천 기준. 예: 30일 1회 이하 → {"low_usage_window_days": 30, "low_usage_max_count": 1}
+    low_usage_window_days: Annotated[int, Field(ge=7, le=365, strict=True)] | None = None
+    low_usage_max_count: Annotated[int, Field(ge=0, le=100, strict=True)] | None = None
 
     @field_validator("notifications_enabled", "recommendation_enabled",
-                     "auto_tracking_enabled", "usage_check_enabled", "usage_check_time")
+                     "auto_tracking_enabled", "usage_check_enabled", "usage_check_time",
+                     "low_usage_window_days", "low_usage_max_count")
     @classmethod
     def not_null(cls, value):
         if value is None:
@@ -411,10 +417,12 @@ class RecommendationItem(BaseModel):
     price_won: int
     billing_cycle: BillingCycle
     reasons: list[RecommendationReason]
-    usage_count_90d: int
+    # 설정한 판단 기간(window_days일) 동안의 이용 횟수
+    recent_usage_count: int
+    window_days: int
     # 같은 카테고리의 다른 활성 구독 (duplicate_category일 때)
     duplicate_with: list[int]
-    # 월 요금 ÷ 월평균 이용 횟수(90일 이용/3). 이용 0회면 null
+    # 월 요금 ÷ 월평균 이용 횟수(기간 이용 횟수를 30일 기준으로 환산). 이용 0회면 null
     cost_per_use_won: int | None
     monthly_saving_won: int
     yearly_saving_won: int

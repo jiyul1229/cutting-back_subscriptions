@@ -13,8 +13,10 @@ CANCEL_WINDOW_DAYS = 5
 # 메모에 이런 표현이 있으면 해지 추천 이유로 덧붙입니다.
 NEGATIVE_MEMO_KEYWORDS = ("안 봄", "안봄", "재미없", "안 씀", "안씀", "해지")
 # 해지 추천(미사용): 관찰 30일 이상이고 최근 90일 이용이 2회 이하. 앱 코어 엔진과 같은 기준입니다.
+# 기본값이며 사용자가 설정(low_usage_window_days, low_usage_max_count)에서 바꿀 수 있습니다.
 LOW_USAGE_WINDOW_DAYS = 90
 LOW_USAGE_MAX_COUNT = 2
+# 판단 기간이 이보다 짧으면 판단 기간만큼만 관찰하면 됩니다.
 LOW_USAGE_MIN_OBSERVATION_DAYS = 30
 # 사용자가 유지/보류를 결정하면 이 기간 동안 같은 구독을 다시 추천하지 않습니다.
 RECOMMENDATION_SNOOZE_DAYS = 30

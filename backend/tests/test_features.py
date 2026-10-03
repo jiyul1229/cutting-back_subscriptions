@@ -207,6 +207,7 @@ class FeatureApiTests(LiveApiTestCase):
         values = {"notifications_enabled": False, "recommendation_enabled": False}
         self.assertEqual(self.request("PATCH", "/api/settings", values), {
             **values, "auto_tracking_enabled": False, "usage_check_enabled": True, "usage_check_time": "21:00",
+            "low_usage_window_days": 90, "low_usage_max_count": 2,
         })
         self.assertEqual(self.request("GET", "/api/settings").items() >= values.items(), True)
         self.assertEqual(self.request("GET", "/api/notifications"), [])

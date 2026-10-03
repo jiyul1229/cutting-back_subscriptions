@@ -17,7 +17,7 @@ class FrontendParityTests(LiveApiTestCase):
             for table in ("decision_history", "usage_logs", "payment_records", "subscriptions"):
                 connection.execute(f"DELETE FROM {table}")
             connection.execute("UPDATE app_settings SET notifications_enabled=1, recommendation_enabled=1, "
-                               "usage_check_enabled=1")
+                               "usage_check_enabled=1, low_usage_window_days=90, low_usage_max_count=2")
 
     def age(self, sid, days):
         start = datetime.combine(today() - timedelta(days=days - 1), time.min, BUSINESS_TZ)
@@ -130,6 +130,43 @@ class FrontendParityTests(LiveApiTestCase):
         self.create_subscription(name="연간", price_won=120000, billing_cycle="yearly",
                                  billing_month=12, billing_day=1)
         self.assertEqual(self.request("GET", "/api/dashboard")["monthly_total_won"], 10000 + 10000)
+
+    def test_low_usage_criteria_are_adjustable(self):
+        def sub_with_uses(name, days_ago_list):
+            sid = self.create_subscription(name=name, category=name, price_won=9000)["id"]
+            self.age(sid, 120)
+            for days_ago in days_ago_list:
+                self.request("POST", f"/api/subscriptions/{sid}/usage-logs",
+                             {"used_date": (today() - timedelta(days=days_ago)).isoformat()}, 201)
+            return sid
+
+        recent = sub_with_uses("recent", [1, 2, 3])        # 최근 30일에 3회
+        old = sub_with_uses("old", [40, 50, 60])            # 31~90일 전에만 3회
+        # 기본(90일 2회 이하): 둘 다 3회라 추천 없음
+        self.assertEqual(self.recommended(), {})
+        # 30일 1회 이하로 바꾸면 최근에 안 쓴 old만 추천
+        settings = self.request("PATCH", "/api/settings", {"low_usage_window_days": 30, "low_usage_max_count": 1})
+        self.assertEqual((settings["low_usage_window_days"], settings["low_usage_max_count"]), (30, 1))
+        items = self.recommended()
+        self.assertEqual(set(items), {old})
+        self.assertEqual((items[old]["recent_usage_count"], items[old]["window_days"]), (0, 30))
+        self.assertIsNone(items[old]["cost_per_use_won"])
+        # 90일 3회 이하로 바꾸면 둘 다 추천, 이용 단가는 월 요금 ÷ (3회 × 30/90)
+        self.request("PATCH", "/api/settings", {"low_usage_window_days": 90, "low_usage_max_count": 3})
+        items = self.recommended()
+        self.assertEqual(set(items), {recent, old})
+        self.assertEqual(items[recent]["cost_per_use_won"], 9000)
+        for bad in ({"low_usage_window_days": 6}, {"low_usage_window_days": 366},
+                    {"low_usage_max_count": -1}, {"low_usage_max_count": "2"}, {"low_usage_window_days": None}):
+            self.request("PATCH", "/api/settings", bad, 422)
+
+    def test_short_window_needs_only_that_much_observation(self):
+        sid = self.create_subscription(name="new")["id"]
+        self.age(sid, 10)
+        self.request("PATCH", "/api/settings", {"low_usage_window_days": 7, "low_usage_max_count": 0})
+        self.assertEqual(set(self.recommended()), {sid})  # 7일 기준이면 7일만 지켜보면 됨
+        self.request("PATCH", "/api/settings", {"low_usage_window_days": 14})
+        self.assertEqual(self.recommended(), {})  # 10일밖에 안 돼 아직 판단하지 않음
 
     def test_reset_data(self):
         sid = self.create_subscription()["id"]

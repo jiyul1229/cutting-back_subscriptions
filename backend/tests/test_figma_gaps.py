@@ -165,7 +165,7 @@ class FigmaGapApiTests(LiveApiTestCase):
         outside = sub_with_uses("outside", [0, 1, 90])  # 90일 전 기록은 기간 밖 → 2회 → 미사용
         items = {i["subscription_id"]: i for i in self.request("GET", "/api/analytics/recommendations")["items"]}
         self.assertEqual(set(items), {two, outside})
-        self.assertEqual((items[two]["usage_count_90d"], items[outside]["usage_count_90d"]), (2, 2))
+        self.assertEqual((items[two]["recent_usage_count"], items[outside]["recent_usage_count"]), (2, 2))
         self.assertNotIn(three, items)
 
     def test_new_subscription_is_not_low_usage(self):
