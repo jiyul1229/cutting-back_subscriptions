@@ -100,7 +100,7 @@ def get_usage_checks(db: DatabaseSession):
         answered = {sid for sid, source, _ in logs if source != "mobile_auto"}
         auto_minutes = {sid: minutes for sid, source, minutes in logs if source == "mobile_auto"}
         for subscription in db.scalars(select(Subscription).where(
-            Subscription.status == "active"
+            Subscription.status == "active", Subscription.track_usage.is_(True)
         ).order_by(Subscription.id)):
             if subscription.id in answered:
                 continue

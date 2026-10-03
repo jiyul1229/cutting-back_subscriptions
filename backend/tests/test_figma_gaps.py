@@ -120,6 +120,37 @@ class FigmaGapApiTests(LiveApiTestCase):
                          {"enabled": False, "monthly_saving_won": 0, "yearly_saving_won": 0, "items": []})
         self.assertNotIn("recommendation", [n["type"] for n in self.request("GET", "/api/notifications")])
 
+    def test_fixed_expense_is_not_tracked(self):
+        # 보험료처럼 이용 기록 대상이 아니면 미사용 알림·추천·이용 확인에서 빠집니다.
+        insurance = self.create_subscription(name="보험료", category="etc", track_usage=False)
+        self.assertFalse(insurance["track_usage"])
+        # 이용 기록 대상인 '기타' 구독 2개: 서로 중복으로 추천하지 않아야 합니다.
+        other_etc = self.create_subscription(name="통신비", category="etc")["id"]
+        third_etc = self.create_subscription(name="클라우드", category="etc", price_won=3000)["id"]
+        for sid in (other_etc, third_etc):
+            for _ in range(2):  # 미사용(1회 이하)이 아니게 해서 중복 여부만 확인
+                self.request("POST", f"/api/subscriptions/{sid}/usage-logs", {}, 201)
+        for sid in (insurance["id"], other_etc, third_etc):
+            self.age(sid, 40)
+        self.assertEqual(self.request("GET", "/api/analytics/recommendations")["items"], [])
+        notice_types = {(n["subscription_id"], n["type"]) for n in self.request("GET", "/api/notifications")}
+        self.assertNotIn((insurance["id"], "no_usage"), notice_types)
+        checks = [i["subscription_id"] for i in self.request("GET", "/api/usage-checks")["items"]]
+        self.assertNotIn(insurance["id"], checks)
+        self.request("PATCH", f"/api/subscriptions/{insurance['id']}", {"track_usage": None}, 422)
+        self.assertTrue(self.request("PATCH", f"/api/subscriptions/{insurance['id']}", {"track_usage": True})["track_usage"])
+
+    def test_latest_decision_in_responses(self):
+        sid = self.create_subscription()["id"]
+        detail = f"/api/subscriptions/{sid}"
+        self.assertIsNone(self.request("GET", detail)["latest_decision"])
+        self.request("POST", detail + "/decisions", {"decision": "postpone"}, 201)
+        self.request("POST", detail + "/decisions", {"decision": "keep"}, 201)
+        self.assertEqual(self.request("GET", detail)["latest_decision"], "keep")
+        self.assertEqual(self.request("GET", "/api/subscriptions")[0]["latest_decision"], "keep")
+        self.assertEqual(self.request("GET", "/api/dashboard")["subscriptions"][0]["latest_decision"], "keep")
+        self.assertEqual(self.request("PATCH", detail, {"memo": "x"})["latest_decision"], "keep")
+
     def test_new_subscription_is_not_low_usage(self):
         self.create_subscription()
         self.assertEqual(self.request("GET", "/api/analytics/recommendations")["items"], [])

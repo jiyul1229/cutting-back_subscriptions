@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from app.calculations import month_bounds, month_shift, next_renewal, scheduled_date, today
 from app.models import PaymentRecord, Subscription
 from app.routers.dependencies import SyncedSession
+from app.routers.subscriptions import latest_decisions
 from app.schemas import DashboardResponse, DashboardSubscription, SubscriptionResponse
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -19,6 +20,7 @@ def change(current: int, previous: int | None) -> tuple[int | None, float | None
 def get_dashboard(db: SyncedSession):
     current = today()
     subscriptions = list(db.scalars(select(Subscription).where(Subscription.status == "active")))
+    decisions = latest_decisions(db, [subscription.id for subscription in subscriptions])
     items = []
     total = 0
     for subscription in subscriptions:
@@ -28,6 +30,7 @@ def get_dashboard(db: SyncedSession):
         items.append(DashboardSubscription(**{
             **SubscriptionResponse.model_validate(subscription).model_dump(),
             "next_renewal_date": upcoming, "d_day": (upcoming - current).days,
+            "latest_decision": decisions.get(subscription.id),
         }))
     items.sort(key=lambda item: (item.next_renewal_date, item.id))
     # 전월 대비: 이번 달 예상 구독료와 지난달 실제 결제액(분석 제외·해지·삭제 구독 포함)을 비교합니다.

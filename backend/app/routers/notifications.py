@@ -38,7 +38,7 @@ def notification_candidates(db: DatabaseSession):
             ))
         baseline = last_used if last_used is not None else business_date(subscription.created_at)
         days = (current - baseline).days
-        if days >= INACTIVITY_DAYS:
+        if subscription.track_usage and days >= INACTIVITY_DAYS:
             result.append(NotificationCandidate(
                 subscription_id=subscription.id, name=subscription.name,
                 type="no_usage", days_without_usage=days,

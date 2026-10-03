@@ -75,6 +75,7 @@ class SubscriptionCreate(BaseModel):
     notification_enabled: StrictBool = True
     renewal_reminder_days: ReminderDays = 7
     include_in_analysis: StrictBool = True
+    track_usage: StrictBool = True
     android_package: AndroidPackage | None = None
 
     @model_validator(mode="after")
@@ -109,10 +110,11 @@ class SubscriptionUpdate(BaseModel):
     notification_enabled: StrictBool | None = None
     renewal_reminder_days: ReminderDays | None = None
     include_in_analysis: StrictBool | None = None
+    track_usage: StrictBool | None = None
     android_package: AndroidPackage | None = None
 
     @field_validator("name", "price_won", "billing_cycle", "billing_day", "status",
-                     "notification_enabled", "renewal_reminder_days", "include_in_analysis")
+                     "notification_enabled", "renewal_reminder_days", "include_in_analysis", "track_usage")
     @classmethod
     def reject_null(cls, value):
         # 생략은 허용하지만 필수 필드의 명시적인 null은 거부합니다.
@@ -138,6 +140,7 @@ class SubscriptionResponse(BaseModel):
     notification_enabled: bool
     renewal_reminder_days: int
     include_in_analysis: bool
+    track_usage: bool
     android_package: str | None
     deleted_at: UTCDateTime | None
     created_at: UTCDateTime
@@ -145,6 +148,8 @@ class SubscriptionResponse(BaseModel):
     # 활성 구독만 계산합니다. 해지·일시정지·삭제면 null.
     next_renewal_date: date | None = None
     d_day: int | None = None
+    # 가장 최근 결정(유지/해지/보류). 기록이 없으면 null. 구독 상태(status)를 바꾸지는 않습니다.
+    latest_decision: Decision | None = None
 
 
 class LegacyCheckInCreate(BaseModel):

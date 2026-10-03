@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.auto_payments import ensure_auto_payments
 from app.calculations import next_renewal, today
-from app.models import Subscription, utc_now
+from app.models import DecisionHistory, Subscription, utc_now
 from app.routers.dependencies import DatabaseSession, SubscriptionId, get_subscription_or_404
 from app.schemas import SubscriptionCreate, SubscriptionResponse, SubscriptionUpdate
 
@@ -16,8 +16,21 @@ from app.schemas import SubscriptionCreate, SubscriptionResponse, SubscriptionUp
 router = APIRouter(prefix="/api/subscriptions", tags=["subscriptions"])
 
 
-def to_response(subscription: Subscription) -> SubscriptionResponse:
+def latest_decisions(db, ids: list[int]) -> dict[int, str]:
+    """구독별 가장 최근 결정. 결정 시각, 같으면 나중에 기록한 순서로 정렬해 마지막 값을 씁니다."""
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(DecisionHistory.subscription_id, DecisionHistory.decision)
+        .where(DecisionHistory.subscription_id.in_(ids))
+        .order_by(DecisionHistory.decided_at, DecisionHistory.id)
+    )
+    return {subscription_id: decision for subscription_id, decision in rows}
+
+
+def to_response(subscription: Subscription, decision: str | None = None) -> SubscriptionResponse:
     response = SubscriptionResponse.model_validate(subscription)
+    response.latest_decision = decision
     if subscription.status == "active":
         current = today()
         response.next_renewal_date = next_renewal(subscription, current)
@@ -44,6 +57,10 @@ def create_subscription(payload: SubscriptionCreate, db: DatabaseSession):
     return to_response(subscription)
 
 
+def respond(db, subscription: Subscription) -> SubscriptionResponse:
+    return to_response(subscription, latest_decisions(db, [subscription.id]).get(subscription.id))
+
+
 @router.get("", response_model=list[SubscriptionResponse])
 def list_subscriptions(
     db: DatabaseSession, include_deleted: Annotated[bool, Query()] = False,
@@ -51,12 +68,14 @@ def list_subscriptions(
     query = select(Subscription)
     if not include_deleted:
         query = query.where(Subscription.deleted_at.is_(None))
-    return [to_response(subscription) for subscription in db.scalars(query.order_by(Subscription.id))]
+    subscriptions = list(db.scalars(query.order_by(Subscription.id)))
+    decisions = latest_decisions(db, [subscription.id for subscription in subscriptions])
+    return [to_response(subscription, decisions.get(subscription.id)) for subscription in subscriptions]
 
 
 @router.get("/{id}", response_model=SubscriptionResponse)
 def get_subscription(id: SubscriptionId, db: DatabaseSession):
-    return to_response(get_subscription_or_404(id, db, allow_deleted=True))
+    return respond(db, get_subscription_or_404(id, db, allow_deleted=True))
 
 
 @router.patch("/{id}", response_model=SubscriptionResponse)
@@ -78,7 +97,7 @@ def update_subscription(id: SubscriptionId, payload: SubscriptionUpdate, db: Dat
         setattr(subscription, field, value)
     commit_or_conflict(db)
     db.refresh(subscription)
-    return to_response(subscription)
+    return respond(db, subscription)
 
 
 @router.delete("/{id}", status_code=204)
@@ -106,4 +125,4 @@ def restore_subscription(id: SubscriptionId, db: DatabaseSession):
     subscription.deleted_at = None
     db.commit()
     db.refresh(subscription)
-    return to_response(subscription)
+    return respond(db, subscription)

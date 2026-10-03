@@ -3,7 +3,9 @@
 추천 이유
 - low_usage: 관찰 30일 이상인데 최근 30일 이용이 LOW_USAGE_MAX_COUNT_30D회 이하
 - duplicate_category: 같은 카테고리의 활성 구독이 2개 이상일 때, 가장 많이 쓰는 1개를 빼고 나머지
-  (이용 횟수가 같으면 더 싼 것을 남깁니다)
+  (이용 횟수가 같으면 더 싼 것을 남깁니다). '기타'(etc)는 서로 다른 서비스 묶음이라 제외합니다.
+
+이용 기록 대상이 아닌 구독(track_usage=false, 보험료·통신비 등)은 추천하지 않습니다.
 
 사용자가 최근 RECOMMENDATION_SNOOZE_DAYS일 안에 유지(keep)나 보류(postpone)를 결정한 구독은 제외합니다.
 절약 금액은 월간 구독은 요금, 연간 구독은 요금/12(반올림)를 한 달 기준으로 씁니다.
@@ -22,6 +24,10 @@ from app.models import DecisionHistory, Subscription, UsageLog
 from app.schemas import RecommendationItem
 
 
+# 서로 다른 서비스를 모아둔 분류라 중복으로 보지 않습니다.
+NON_GROUP_CATEGORIES = {"etc", "기타"}
+
+
 def monthly_saving(subscription: Subscription) -> int:
     if subscription.billing_cycle == "yearly":
         return round(subscription.price_won / 12)
@@ -37,7 +43,7 @@ def yearly_saving(subscription: Subscription) -> int:
 def build_recommendations(db: Session, current: date | None = None) -> list[RecommendationItem]:
     current = current or today()
     subscriptions = list(db.scalars(select(Subscription).where(
-        Subscription.status == "active"
+        Subscription.status == "active", Subscription.track_usage.is_(True)
     ).order_by(Subscription.id)))
     if not subscriptions:
         return []
@@ -75,8 +81,9 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
 
     groups: dict[str, list[Subscription]] = defaultdict(list)
     for subscription in subscriptions:
-        if subscription.category and subscription.category.strip():
-            groups[subscription.category.strip().casefold()].append(subscription)
+        key = (subscription.category or "").strip().casefold()
+        if key and key not in NON_GROUP_CATEGORIES:
+            groups[key].append(subscription)
     duplicate_with: dict[int, list[int]] = {}
     for members in groups.values():
         if len(members) < 2:

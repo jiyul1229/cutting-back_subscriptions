@@ -131,7 +131,7 @@ README.md
 
 | 테이블 | 필드 |
 | --- | --- |
-| subscriptions | id Integer PK, name String, price_won Integer, billing_cycle String, billing_day Integer, billing_month Integer nullable, category String nullable, plan_name String nullable, memo String nullable, started_on Date nullable, status String, notification_enabled Boolean, renewal_reminder_days Integer, include_in_analysis Boolean, android_package String nullable UNIQUE, auto_payment_checked_on Date nullable, deleted_at DateTime nullable, created_at DateTime, updated_at DateTime |
+| subscriptions | id Integer PK, name String, price_won Integer, billing_cycle String, billing_day Integer, billing_month Integer nullable, category String nullable, plan_name String nullable, memo String nullable, started_on Date nullable, status String, notification_enabled Boolean, renewal_reminder_days Integer, include_in_analysis Boolean, track_usage Boolean, android_package String nullable UNIQUE, auto_payment_checked_on Date nullable, deleted_at DateTime nullable, created_at DateTime, updated_at DateTime |
 | usage_logs | id Integer PK, subscription_id Integer FK, used_date Date, source String, duration_minutes Integer nullable, device String nullable, memo String nullable, created_at DateTime, updated_at DateTime |
 | payment_records | id Integer PK, subscription_id Integer FK, amount_won Integer, paid_date Date, category_snapshot String nullable, source String(manual/auto), created_at DateTime |
 | decision_history | id Integer PK, subscription_id Integer FK, decision String, decided_at DateTime, memo String nullable |
@@ -216,6 +216,7 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
   "notification_enabled": true,
   "renewal_reminder_days": 7,
   "include_in_analysis": true,
+  "track_usage": true,
   "android_package": "com.netflix.mediaclient"
 }
 ```
@@ -225,6 +226,8 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
 category, billing_month, plan_name, memo, started_on, android_package는 생략하면 null입니다.
 plan_name·memo는 앞뒤 공백을 지우며 최대 500자입니다. started_on은 실제 구독 시작일이며 미래 날짜는 거부합니다.
 화면의 "등록일"은 started_on이 있으면 그 값, 없으면 created_at을 보여주면 됩니다.
+track_usage(기본 true)는 이용 기록 대상 여부입니다. 보험료·통신비처럼 이용 횟수가 의미 없으면 false로 두며,
+그러면 미사용 알림·해지 추천·이용 확인에서 빠집니다. include_in_analysis는 프론트의 "분석 표시"(showSavings) 토글입니다.
 
 - billing_cycle: monthly/yearly. yearly는 billing_month(1~12)가 필수.
 - billing_day: 1~31. 연간 규칙은 유효한 월/일 조합이어야 하며 2월 29일은 허용.
@@ -239,6 +242,7 @@ plan_name·memo는 앞뒤 공백을 지우며 최대 500자입니다. started_on
 응답은 입력 필드 전체 + id, deleted_at, created_at, updated_at, next_renewal_date, d_day입니다.
 created_at/updated_at 예: `2026-09-30T10:30:00.123456Z`.
 next_renewal_date/d_day는 활성 구독만 계산하고 해지·일시정지·삭제면 null입니다.
+latest_decision은 가장 최근 결정(keep/cancel/postpone, 없으면 null)입니다. 홈 구독 항목에도 들어 있습니다.
 
 한국 날짜(UTC+09:00)를 기준으로 계산합니다. 31일이 없는 월은 마지막 날로 보정하고 원래 billing_day는 바꾸지 않습니다.
 월간 31일은 2026년 2월 28일, 2028년 2월 29일에 해당합니다.
@@ -447,7 +451,8 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
 
 - low_usage: 관찰 30일 이상이고 최근 30일 이용 1회 이하. 등록한 지 30일이 안 된 구독은 추천하지 않습니다.
 - duplicate_category: 같은 카테고리(앞뒤 공백·대소문자 무시)의 활성 구독이 2개 이상이면
-  최근 30일 이용이 가장 많은 1개(같으면 더 싼 것)를 남기고 나머지를 추천합니다. 카테고리 null은 제외.
+  최근 30일 이용이 가장 많은 1개(같으면 더 싼 것)를 남기고 나머지를 추천합니다. 카테고리 null과 etc/기타는 제외.
+- track_usage=false 구독은 추천하지 않습니다.
 - 최근 30일 안에 keep 또는 postpone 결정을 기록한 구독은 추천하지 않습니다.
 - 절약 금액: 월간은 요금, 연간은 요금/12(반올림)를 한 달 기준으로, 연간 절약은 월간×12 또는 연간 요금.
   응답 상단의 합계가 "이번 달 총 절약 가능 금액 / 연간 최대"입니다.
@@ -587,7 +592,7 @@ DB 삭제 후 재생성은 기본 절차가 아닙니다. 데이터가 불필요
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-44개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
+46개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
 기존 12개 테스트 범위를 유지하고 checked_at → used_date, 추가 응답 필드, DELETE CORS 허용 변경에 맞춰 검증을 수정했습니다.
 새 검증은 월말/윤년/연간 갱신, D-day와 정렬, 동일 날짜 예정+실제, 설정/알림 경계,
 manual/mobile_auto/notification, 과거일/수정/삭제/필터, 7/30/90일과 30/60일 관찰 경계,

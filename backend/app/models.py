@@ -62,6 +62,9 @@ class Subscription(Base):
     notification_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     renewal_reminder_days: Mapped[int] = mapped_column(Integer, default=7)
     include_in_analysis: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 이용 기록 대상 여부. 보험료·통신비처럼 이용 횟수가 의미 없는 고정지출은 false로 두어
+    # 미사용 알림·해지 추천·이용 확인에서 뺍니다.
+    track_usage: Mapped[bool] = mapped_column(Boolean, default=True)
     # Android 앱 패키지명. 예: com.netflix.mediaclient
     android_package: Mapped[str | None] = mapped_column(String, nullable=True)
     # 자동 결제 기록을 이 날짜(한국 날짜)까지 확인했습니다. null이면 등록 전날부터 확인합니다.
