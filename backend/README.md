@@ -69,6 +69,7 @@ Expo 서버와 FastAPI는 별도입니다. Expo의 --tunnel은 FastAPI 8000 포�
 | CORS_ALLOW_ORIGINS | http://localhost:8081,http://127.0.0.1:8081 |
 | SUBSCRIPTION_DB_PATH | 생략 시 프로젝트 루트 subscriptions.db |
 | USAGE_EVALUATION_DAYS | 30. data_status의 관찰 기간 기준이며 30/60/90 중 선택 |
+| MEMO_ANALYSIS | keyword(기본) 또는 ai. ai면 Claude로 메모를 분석(아래 "메모 분석" 참고) |
 
 ```powershell
 $env:CORS_ALLOW_ORIGINS = "http://localhost:8081,http://127.0.0.1:8081,http://192.168.0.10:8081"
@@ -114,6 +115,7 @@ app/
   auto_payments.py        # 지난 결제일의 결제 기록 자동 생성
   recommendations.py      # 해지 추천 계산 (미사용 + 같은 카테고리 중복)
   decision_state.py       # 구독별 최근 결정(유지/해지/보류 태그)
+  memo_analysis.py        # 이용 기록 메모 분석 (Claude 또는 키워드)
   migrate.py              # 명시적 백업/변환/검증/교체
   seed_demo.py            # 발표용 예시 데이터
   routers/
@@ -127,13 +129,16 @@ app/
     calendar.py           # 예정+실제 날짜 항목
     analytics.py          # 실제 지출 합계/카테고리
     settings.py           # single-user 설정
-    notifications.py      # 알림 후보 조회
+    notifications.py      # 알림 후보 조회, 폰 알림 예약 일정
+    presets.py            # 주요 서비스 프리셋
+    metrics.py            # 등록 시간·주당 체크인·오탐률 지표
 tests/
   test_api.py             # 기존 검증 범위/HTTP 서버 fixture
   test_features.py        # 새 화면/계산/마이그레이션 검증
   test_usage_tracking.py  # 이용 시간 자동·수기 기록, 이용 확인, 자동 결제 검증
   test_figma_gaps.py      # 구독 필드, 삭제, 전월 대비, 월별 추이, 해지 추천 검증
   test_frontend_parity.py # 앱 기준 맞춤: 해지 권장 기간, 해지 태그, 메모 부정 표현, 이용 단가, 전체 초기화
+  test_doc_alignment.py   # 팀 문서 기준: 캘린더 해지 기한, 매주 결제, 알림 예약, 프리셋, 지표, 민감도 조정, AI 메모
 mobile/                   # Expo 앱에 복사할 Android 자동 측정 모듈과 호출 코드 (mobile/README.md)
 requirements.txt
 .env.example
@@ -147,10 +152,11 @@ README.md
 
 | 테이블 | 필드 |
 | --- | --- |
-| subscriptions | id Integer PK, name String, price_won Integer, billing_cycle String, billing_day Integer, billing_month Integer nullable, category String nullable, plan_name String nullable, memo String nullable, started_on Date nullable, status String, notification_enabled Boolean, renewal_reminder_days Integer, include_in_analysis Boolean, track_usage Boolean, android_package String nullable UNIQUE, auto_payment_checked_on Date nullable, deleted_at DateTime nullable, created_at DateTime, updated_at DateTime |
-| usage_logs | id Integer PK, subscription_id Integer FK, used_date Date, source String, duration_minutes Integer nullable, device String nullable, memo String nullable, created_at DateTime, updated_at DateTime |
+| subscriptions | id Integer PK, name String, price_won Integer, billing_cycle String(monthly/yearly/weekly), billing_day Integer nullable, billing_month Integer nullable, billing_weekday Integer nullable(0=월~6=일), category String nullable, plan_name String nullable, memo String nullable, started_on Date nullable, status String, notification_enabled Boolean, renewal_reminder_days Integer, include_in_analysis Boolean, track_usage Boolean, android_package String nullable UNIQUE, low_usage_max_count_override Integer nullable, low_usage_snooze_until Date nullable, duplicate_exempt Boolean, registration_seconds Integer nullable, auto_payment_checked_on Date nullable, deleted_at DateTime nullable, created_at DateTime, updated_at DateTime |
+| usage_logs | id Integer PK, subscription_id Integer FK, used_date Date, source String, duration_minutes Integer nullable, device String nullable, memo String nullable, memo_negative Boolean nullable, memo_analyzed_by String nullable(ai/keyword), created_at DateTime, updated_at DateTime |
 | payment_records | id Integer PK, subscription_id Integer FK, amount_won Integer, paid_date Date, category_snapshot String nullable, source String(manual/auto), created_at DateTime |
 | decision_history | id Integer PK, subscription_id Integer FK, decision String, decided_at DateTime, memo String nullable |
+| recommendation_warnings | id Integer PK, subscription_id Integer FK, reasons String, recent_usage_count Integer, window_days Integer, shown_on Date, resolved_at DateTime nullable, resolution String nullable(still_using/keep/cancel/hold) — 응답 전 경고는 구독마다 하나 |
 | app_settings | id Integer PK(항상 1), notifications_enabled Boolean, recommendation_enabled Boolean, auto_tracking_enabled Boolean, usage_check_enabled Boolean, usage_check_time String(HH:MM) |
 
 Subscription과 UsageLog/PaymentRecord/DecisionHistory는 양방향 1:N 관계입니다.
@@ -168,7 +174,7 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
 | --- | --- | --- |
 | GET | /health | 상태 확인 200 |
 | POST | /api/subscriptions | 구독 생성 201 |
-| GET | /api/subscriptions | 전체 목록(ID 오름차순) 200 |
+| GET | /api/subscriptions | 목록 200. `?sort=id|name|price|category|next_renewal&order=asc|desc&category=ott` |
 | GET | /api/subscriptions/{id} | 상세 200 |
 | PATCH | /api/subscriptions/{id} | 구독/서비스별 설정 수정 200 |
 | DELETE | /api/subscriptions/{id} | 구독 삭제(숨김) 204 |
@@ -194,6 +200,11 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
 | GET | /api/analytics/trend?year=2026&month=9&months=5 | 최근 N개월 실제 지출 200 |
 | GET | /api/analytics/recommendations | 해지 추천과 절약 금액 200 |
 | GET | /api/notifications | 알림 후보 목록 200 |
+| GET | /api/notifications/schedule?days=30 | 폰이 예약할 알림 일정 200 |
+| POST | /api/subscriptions/{id}/recommendation-feedback | 해지 추천에 "아직 쓰고 있어요" 200 |
+| DELETE | /api/subscriptions/{id}/recommendation-feedback | 그 구독의 개인화 기준 초기화 204 |
+| GET | /api/presets | 주요 서비스 프리셋 10개 200 |
+| GET | /api/metrics?weeks=4 | 등록 시간·주당 체크인·오탐률 지표 200 |
 | GET | /api/settings | 전체 설정 200 |
 | PATCH | /api/settings | 전체 설정 수정 200 |
 | POST | /api/settings/reset-data | 전체 초기화 204 (`{"confirm": true}` 필수) |
@@ -238,7 +249,7 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
 }
 ```
 
-필수 입력은 name, price_won, billing_day입니다.
+필수 입력은 name, price_won, billing_day입니다. 매주 결제는 billing_day 대신 billing_weekday(0=월~6=일)가 필수입니다.
 기본값은 monthly/active, notification_enabled=true, renewal_reminder_days=3, include_in_analysis=true입니다.
 category, billing_month, plan_name, memo, started_on, android_package는 생략하면 null입니다.
 plan_name·memo는 앞뒤 공백을 지우며 최대 500자입니다. started_on은 실제 구독 시작일이며 미래 날짜는 거부합니다.
@@ -246,7 +257,11 @@ plan_name·memo는 앞뒤 공백을 지우며 최대 500자입니다. started_on
 track_usage(기본 true)는 이용 기록 대상 여부입니다. 보험료·통신비처럼 이용 횟수가 의미 없으면 false로 두며,
 그러면 미사용 알림·해지 추천·이용 확인에서 빠집니다. include_in_analysis는 프론트의 "분석 표시"(showSavings) 토글입니다.
 
-- billing_cycle: monthly/yearly. yearly는 billing_month(1~12)가 필수.
+- billing_cycle: monthly/yearly/weekly. yearly는 billing_month(1~12)가 필수.
+  weekly는 billing_weekday만 쓰고 billing_day·billing_month는 null이어야 합니다.
+  월간 → 매주로 바꿀 때는 `{"billing_cycle":"weekly","billing_weekday":0,"billing_day":null}`처럼 함께 보냅니다.
+  매주 결제의 월 환산은 요금×52/12, 연 환산은 요금×52, 해지 권장 기간은 결제일 이틀 전~하루 전입니다.
+- registration_seconds(선택, 0~3600): 앱이 등록 화면을 연 뒤 저장까지 걸린 초. 등록 부담 지표(/api/metrics)에 씁니다.
 - billing_day: 1~31. 연간 규칙은 유효한 월/일 조합이어야 하며 2월 29일은 허용.
 - status: active/canceled/paused.
 - 금액은 0보다 큰 정수. 문자열/소수/bool을 거부하고 SQLite 64비트 범위를 제한.
@@ -256,7 +271,9 @@ track_usage(기본 true)는 이용 기록 대상 여부입니다. 보험료·통
 - 필수 값의 명시적 null은 거부. monthly 전환 시 billing_month:null을 함께 전송.
 - PATCH의 기존 값과 새 값을 합친 전체 결제 규칙도 검증.
 
-응답은 입력 필드 전체 + id, deleted_at, created_at, updated_at, next_renewal_date, d_day입니다.
+응답은 입력 필드 전체(registration_seconds 제외) + id, deleted_at, created_at, updated_at, next_renewal_date, d_day,
+해지 권장 기간, latest_decision, 개인화 기준(low_usage_max_count_override, low_usage_snooze_until, duplicate_exempt)입니다.
+track_usage=false(통신비·보험료)면 해지 권장 기간은 null입니다(문서 R2: 갱신 리마인드만).
 created_at/updated_at 예: `2026-09-30T10:30:00.123456Z`.
 next_renewal_date/d_day는 활성 구독만 계산하고 해지·일시정지·삭제면 null입니다.
 latest_decision은 가장 최근 결정(keep/cancel/hold, 없으면 null)입니다. 홈 구독 항목에도 들어 있습니다.
@@ -293,6 +310,7 @@ cancel_window_start/cancel_window_end는 해지 권장 기간(다음 결제일 5
 위 예는 한국 날짜 2026-09-30 기준입니다.
 활성 구독만 포함하며 next_renewal_date, id 순으로 정렬합니다.
 monthly_total_won은 **현재 활성 구독의 월 환산 합계**입니다(앱의 totalMonthly와 같음).
+yearly_total_won은 연 환산 합계입니다(월간×12, 연간 그대로, 매주×52).
 월간은 요금 그대로, 연간은 요금/12(반올림)를 더합니다. 남은 날짜의 금액만 더하는 것은 아닙니다.
 실제 결제 유무와 include_in_analysis는 홈 금액에 영향을 주지 않습니다.
 중도 가입/해지 일할 계산은 없으며 실지출과 구분해야 합니다.
@@ -311,12 +329,17 @@ year는 1~9998, month는 1~12입니다. 응답 예:
 ]
 ```
 
-scheduled는 해당 월의 **오늘 이후(오늘 포함)** 활성 구독 규칙을 계산합니다.
-그 달에 같은 구독의 결제 기록(paid)이 이미 있으면 scheduled는 표시하지 않습니다.
+scheduled는 해당 월의 **오늘 이후(오늘 포함)** 활성 구독 규칙을 계산합니다. 매주 결제는 그 달의 해당 요일마다 나옵니다.
+같은 결제 주기(월간=그 달, 연간=그 해, 매주=그 주)에 결제 기록이 이미 있으면 scheduled는 표시하지 않습니다.
+
+**cancel_deadline**은 해지 기한입니다. 결제일 하루 전 날짜에 표시하고 renewal_date에 결제일을 줍니다.
+다음 달 1일 결제의 기한은 이번 달 말일에 나옵니다. 오늘 이전 기한, 이미 결제한 주기,
+'해지' 태그 구독, 이용 기록 대상이 아닌 고정지출(track_usage=false)은 표시하지 않습니다.
+같은 날짜에서는 paid, cancel_deadline, scheduled 순으로 정렬합니다.
 paid는 선택한 월의 실제 PaymentRecord이며 과거 날짜/해지/분석 제외 구독도 표시합니다.
 현재 규칙으로 과거의 예정 결제를 재구성하지 않습니다. 과거 월은 실제 기록만 반환합니다.
 수기 결제가 예정일보다 일찍 기록되면 그 달 scheduled는 사라지고 paid만 남습니다.
-정렬은 date, subscription_id, type, payment_id 순이며 없으면 []입니다.
+정렬은 date, subscription_id, 항목 종류, payment_id 순이며 없으면 []입니다.
 이름은 현재 Subscription.name을 사용하므로 서비스명 변경은 과거 캘린더 표시에도 반영됩니다.
 
 ## 이용 기록: 자동 + 수동
@@ -461,19 +484,22 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
     {"subscription_id": 1, "name": "넷플릭스", "category": "OTT", "price_won": 17000,
      "billing_cycle": "monthly", "reasons": ["low_usage", "duplicate_category"],
      "recent_usage_count": 1, "window_days": 90, "duplicate_with": [2, 3], "cost_per_use_won": 51000,
-     "monthly_saving_won": 17000, "yearly_saving_won": 204000}
-  ]
+     "monthly_saving_won": 17000, "yearly_saving_won": 204000, "personalized": false}
+  ],
+  "collecting": [{"subscription_id": 5, "name": "새 구독", "observation_days": 3, "needed_days": 30}]
 }
 ```
 
-활성 구독만 대상이며 저장하지 않고 조회할 때마다 계산합니다.
+활성 구독만 대상이며 추천은 조회할 때마다 계산합니다. 보여준 추천은 경고(recommendation_warnings)로 기록해
+오탐률 지표에 씁니다(응답 전 경고는 구독마다 하나).
+**collecting**은 관찰 기간이 min(30일, N일)보다 짧아 아직 판단하지 않는 구독입니다. 앱에서 "데이터 수집 중"으로 표시합니다.
 
 - low_usage: 최근 N일 이용이 M회 이하. 기본은 90일 2회(앱 코어 엔진과 같은 기준)이며
   설정의 low_usage_window_days(7~365), low_usage_max_count(0~100)로 사용자가 바꿉니다.
   관찰 기간이 min(30일, N일)보다 짧은 구독은 아직 판단하지 않습니다.
 - duplicate_category: 같은 카테고리(앞뒤 공백·대소문자 무시)의 활성 구독이 3개 이상이면
   최근 N일 이용이 가장 적은 1개(같으면 더 비싼 것)만 추천합니다. 2개뿐이면 중복으로 보지 않습니다. 카테고리 null과 etc/기타는 제외.
-- negative_memo: 미사용 구독의 이용 기록 메모에 "안 봄", "재미없", "안 씀", "해지" 등이 있으면 덧붙는 이유.
+- negative_memo: 미사용 구독의 이용 기록 메모가 '안 쓴다'는 신호이면 덧붙는 이유. 메모 분석 결과(AI 또는 키워드)를 씁니다.
 - recent_usage_count / window_days: 판단 기간(N일)과 그 기간의 이용 횟수.
 - cost_per_use_won: 월 요금 ÷ 한 달 평균 이용 횟수(이용 횟수 × 30 / N). 이용 0회면 null.
   N=90이면 앱 코어 엔진의 '월 요금 ÷ (90일 이용 / 3)'과 같습니다.
@@ -484,6 +510,28 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
 - 설정 recommendation_enabled=false면 enabled=false와 빈 목록을 줍니다.
 - 기본값은 calculations.py의 LOW_USAGE_WINDOW_DAYS, LOW_USAGE_MAX_COUNT, LOW_USAGE_MIN_OBSERVATION_DAYS,
   RECOMMENDATION_SNOOZE_DAYS입니다.
+
+### "아직 쓰고 있어요" (F6 민감도 조정)
+
+`POST /api/subscriptions/{id}/recommendation-feedback` `{"response":"still_using"}`. 지금 추천 대상이 아니면 409.
+
+- 미사용으로 추천됐고 이용이 1회 이상: 이 구독만 기준을 "지금 횟수 - 1회 이하"로 낮춥니다(applied: threshold).
+- 이용 0회(TV 시청 등 기록 누락): 판단 기간 동안 이 구독의 미사용 추천을 멈춥니다(applied: snooze).
+- 중복으로 추천됨: 이 구독을 중복 추천에서 제외하고, 같은 카테고리에서 다음으로 적게 쓰는 구독을 봅니다(applied: duplicate_exempt).
+- 응답 전 경고는 still_using으로 기록됩니다. 개인화된 추천 항목은 personalized=true입니다.
+- `DELETE` 같은 경로로 이 구독의 개인화 기준을 지웁니다.
+
+### 메모 분석 (규칙이 정하고 AI는 보조 — 문서 R3)
+
+이용 기록을 만들거나 메모를 고칠 때 메모를 분석해 memo_negative, memo_analyzed_by(ai/keyword)를 저장합니다.
+기본(MEMO_ANALYSIS=keyword)은 "안 봄", "재미없", "안 씀", "해지" 같은 단어로 판단합니다.
+`MEMO_ANALYSIS=ai`이면 Claude(`claude-opus-5-5`, effort low, JSON 출력)로 판단합니다.
+인증은 Anthropic SDK 기본 방식(ANTHROPIC_API_KEY 또는 `ant auth login` 프로필)을 씁니다.
+안전 분류기가 거절하면 서버 측 대체 모델(`fallbacks: "default"`)로 다시 실행합니다.
+인증이 없거나, 호출이 실패·거절되거나, 결과가 이상하면 키워드로 판단합니다(memo_analyzed_by=keyword).
+애매한 메모는 부정 신호로 보지 않도록 지시했습니다(잘 쓰는 구독에 해지를 권하는 것이 더 큰 손해).
+분석 결과는 추천 근거를 보탤 뿐, 추천 여부는 이용 횟수 규칙이 정합니다.
+분석 전에 저장된 이전 기록은 조회할 때 키워드로 판단합니다.
 
 ## 사용자 결정 이력
 
@@ -527,16 +575,51 @@ GET /api/notifications는 현재 조회 시점의 알림 후보 배열입니다.
 - 전체 notifications_enabled=false이면 [].
 - active + 서비스별 notification_enabled=true인 구독만 대상.
 - renewal: 오늘부터 다음 갱신일까지 0~renewal_reminder_days일(기본 3일)이면 후보(당일 포함).
-- cancel_window: renewal이 아니면서 다음 결제일이 1~5일 남았으면 해지 권장 기간 후보.
+- cancel_window: renewal이 아니면서 다음 결제일이 1~5일(매주 결제는 1~2일) 남았으면 해지 권장 기간 후보.
+  통신비·보험료(track_usage=false)는 해지 권장 기간 알림을 보내지 않습니다(문서 R2).
+- weekly_check: 마지막 이용 기록(없으면 등록일)에서 7일 이상 지나면 "이번 주에 썼나요?" 후보(days_without_record).
+  이용 확인 알림(usage_check_enabled)이 켜져 있고 track_usage=true인 구독만.
 - recommendation: 해지 추천 대상이면 후보(reasons에 이유). recommendation_enabled=false면 제외.
 - '해지' 태그를 붙인 구독은 어떤 알림도 만들지 않습니다.
 - 하나의 구독이 여러 종류 후보를 동시에 가질 수 있음.
-- 서버는 Push/예약 작업/읽음 처리/발송 이력/중복 발송 방지를 구현하지 않음.
+- 서버는 Push를 보내지 않습니다. 폰이 아래 예약 일정을 받아 기기에서 알림을 예약합니다.
 
-응답 항목은 subscription_id, name, type, next_renewal_date, d_day, reasons입니다.
+응답 항목은 subscription_id, name, type, next_renewal_date, d_day, days_without_record, reasons입니다.
 해당 종류와 관계없는 필드는 null입니다.
 추천 OFF는 renewal/cancel_window 후보를 끄지 않습니다.
-7일 미사용 알림(no_usage)은 해지 추천 알림과 겹쳐 삭제했습니다. 오래 안 쓴 구독은 recommendation으로 알립니다.
+
+### 폰 알림 예약 일정
+
+`GET /api/notifications/schedule?days=30`(1~90)은 앞으로 보낼 알림을 시각과 함께 줍니다.
+
+```json
+[{"id":"kood-renewal-1-2026-10-12","subscription_id":1,"name":"넷플릭스","type":"renewal",
+  "fire_at":"2026-10-12T09:00:00+09:00","renewal_date":"2026-10-15","d_day_at_fire":3,"amount_won":17000}]
+```
+
+- renewal: 결제일 renewal_reminder_days일 전 09:00
+- cancel_window: 해지 권장 기간 시작일 09:00 (결제 알림보다 먼저일 때만, track_usage=true만)
+- weekly_check: 마지막 기록 7일 뒤(아직 기록이 없으면 이후 7일마다) usage_check_time
+- 이미 지난 시각, 이미 결제한 주기, '해지' 태그 구독, 구독별 알림 끔은 제외. 전체 알림이 꺼져 있으면 [].
+- 앱은 열 때마다 이 목록을 받아 `kood-`로 시작하는 기존 예약을 지우고 다시 넣습니다(mobile/의 scheduleReminders).
+  id가 날짜까지 포함하므로 같은 알림이 중복 예약되지 않습니다.
+
+## 주요 서비스 프리셋
+
+`GET /api/presets`는 등록 화면에서 이름·기본 요금을 미리 채울 서비스 10개를 줍니다(문서 R1).
+넷플릭스·유튜브 프리미엄·티빙·디즈니+·쿠팡 와우·네이버플러스·멜론·스포티파이·리디셀렉트·밀리의서재.
+Figma에 나온 서비스는 시안 금액을 쓰고, 나머지는 대표 요금제의 참고값입니다. 요금은 바뀔 수 있으니 등록 화면에서 고칩니다.
+android_package는 자동 측정 연결용이며 Play 스토어 주소의 id= 값과 다르면 고쳐야 합니다.
+
+## 판단 지표
+
+`GET /api/metrics?weeks=4`(1~52):
+
+- registration_count / registration_seconds_avg / registration_seconds_median: 앱이 registration_seconds를 보낸 구독의 등록 시간
+- checkins_by_week / checkins_per_week_avg: 최근 N주(월~일) 동안 사용자가 직접 남긴 기록(수기·알림 응답). 자동 측정은 제외
+- warnings_shown / warnings_answered / still_using_count: 보여준 해지 추천과 응답 수
+- false_positive_rate: 응답한 경고 중 "아직 쓰고 있어요" 비율(오탐률). 응답이 없으면 null
+- decision_rate: 보여준 경고 중 유지·해지·보류를 결정한 비율
 서비스명 숨기기 설정(hide_service_names)은 디자인에 없어 삭제했습니다. 이전 DB는 마이그레이션 때 컬럼을 버립니다.
 
 ## Android 자동 감지 연동
@@ -629,7 +712,7 @@ DB 삭제 후 재생성은 기본 절차가 아닙니다. 데이터가 불필요
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-63개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
+82개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
 기존 12개 테스트 범위를 유지하고 checked_at → used_date, 추가 응답 필드, DELETE CORS 허용 변경에 맞춰 검증을 수정했습니다.
 새 검증은 월말/윤년/연간 갱신, D-day와 정렬, 동일 날짜 예정+실제, 설정/알림 경계,
 manual/mobile_auto/notification, 과거일/수정/삭제/필터, 7/30/90일과 30/60일 관찰 경계,

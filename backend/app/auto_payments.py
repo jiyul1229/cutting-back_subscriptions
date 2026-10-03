@@ -12,10 +12,10 @@
 """
 from datetime import date, timedelta
 
-from sqlalchemy import extract, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.calculations import business_date, scheduled_date, today
+from app.calculations import billing_cycle_bounds, business_date, scheduled_dates, today
 from app.models import PaymentRecord, Subscription
 
 
@@ -24,9 +24,7 @@ def due_dates(subscription: Subscription, after: date, until: date) -> list[date
     result = []
     year, month = after.year, after.month
     while (year, month) <= (until.year, until.month):
-        due = scheduled_date(subscription, year, month)
-        if due is not None and after < due <= until:
-            result.append(due)
+        result.extend(due for due in scheduled_dates(subscription, year, month) if after < due <= until)
         year, month = (year + 1, 1) if month == 12 else (year, month + 1)
     return result
 
@@ -41,14 +39,12 @@ def first_check_day(subscription: Subscription) -> date:
 
 
 def already_paid(db: Session, subscription: Subscription, due: date) -> bool:
-    """같은 결제 주기(월간은 같은 달, 연간은 같은 해)에 이미 결제 기록이 있는지."""
-    query = select(PaymentRecord.id).where(
+    """같은 결제 주기(월간=같은 달, 연간=같은 해, 매주=같은 주)에 이미 결제 기록이 있는지."""
+    start, end = billing_cycle_bounds(subscription, due)
+    return db.scalar(select(PaymentRecord.id).where(
         PaymentRecord.subscription_id == subscription.id,
-        extract("year", PaymentRecord.paid_date) == due.year,
-    )
-    if subscription.billing_cycle == "monthly":
-        query = query.where(extract("month", PaymentRecord.paid_date) == due.month)
-    return db.scalar(query.limit(1)) is not None
+        PaymentRecord.paid_date >= start, PaymentRecord.paid_date <= end,
+    ).limit(1)) is not None
 
 
 def ensure_auto_payments(db: Session) -> None:

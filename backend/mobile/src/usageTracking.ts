@@ -142,3 +142,89 @@ export function answerUsageCheck(subscriptionId: number, device: Device, duratio
     body: JSON.stringify({ source: "notification", device, duration_minutes: durationMinutes }),
   });
 }
+
+// ---------- 결제·해지 기한·주간 기록 알림 예약 ----------
+
+// 서버가 주는 알림 id는 모두 이 접두사로 시작합니다. 다시 예약할 때 이 접두사의 예약만 지웁니다.
+const REMINDER_PREFIX = "kood-";
+const REMINDER_CHANNEL_ID = "reminders";
+
+export type ReminderItem = {
+  id: string;
+  subscription_id: number;
+  name: string;
+  type: "renewal" | "cancel_window" | "weekly_check";
+  fire_at: string; // 한국 시간 ISO (+09:00)
+  renewal_date: string | null;
+  d_day_at_fire: number | null;
+  amount_won: number | null;
+};
+
+const won = (n: number) => `${n.toLocaleString("ko-KR")}원`;
+
+function reminderContent(item: ReminderItem): { title: string; body: string } {
+  switch (item.type) {
+    case "renewal":
+      return {
+        title: item.d_day_at_fire === 0 ? `오늘 ${item.name} 결제일이에요` : `${item.name} 결제 D-${item.d_day_at_fire}`,
+        body: item.amount_won !== null ? `${won(item.amount_won)}이 결제될 예정이에요.` : "결제가 예정되어 있어요.",
+      };
+    case "cancel_window": {
+      // 해지 기한 = 결제일 하루 전
+      const deadline = new Date(`${item.renewal_date}T00:00:00+09:00`);
+      deadline.setDate(deadline.getDate() - 1);
+      return {
+        title: `${item.name} 해지 기한이 다가와요`,
+        body: `${deadline.getMonth() + 1}/${deadline.getDate()}까지 해지하지 않으면 다음 결제가 나가요. 확인해 보세요.`,
+      };
+    }
+    case "weekly_check":
+      return {
+        title: `이번 주에 ${item.name} 썼나요?`,
+        body: "일주일 동안 기록이 없어요. 썼다면 눌러서 기록해 주세요.",
+      };
+  }
+}
+
+/**
+ * 앞으로 days일 동안의 결제 알림, 해지 기한 알림, "이번 주에 썼나요?" 알림을 폰에 예약합니다.
+ * 앱을 열 때, 구독을 추가·수정한 뒤, 설정을 바꾼 뒤 호출하세요. 매번 기존 예약을 지우고 새로 넣으므로
+ * 여러 번 호출해도 중복되지 않습니다. 서버는 이미 지난 시각을 주지 않습니다.
+ * 반환값: 예약한 알림 개수 (알림 권한이 없으면 0)
+ */
+export async function scheduleReminders(days = 30): Promise<number> {
+  const permission = await Notifications.requestPermissionsAsync();
+  if (!permission.granted) return 0;
+  await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
+    name: "결제·해지 알림",
+    importance: Notifications.AndroidImportance.HIGH,
+  });
+
+  const items = await api<ReminderItem[]>(`/api/notifications/schedule?days=${days}`);
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(
+    scheduled
+      .filter((n) => n.identifier.startsWith(REMINDER_PREFIX))
+      .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier)),
+  );
+  for (const item of items) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: item.id,
+      content: { ...reminderContent(item), data: { type: item.type, subscriptionId: item.subscription_id } },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: new Date(item.fire_at),
+        channelId: REMINDER_CHANNEL_ID,
+      },
+    });
+  }
+  return items.length;
+}
+
+/** 해지 추천 카드의 "아직 쓰고 있어요". 이 구독의 추천 기준이 조정됩니다. */
+export function markStillUsing(subscriptionId: number) {
+  return api(`/api/subscriptions/${subscriptionId}/recommendation-feedback`, {
+    method: "POST",
+    body: JSON.stringify({ response: "still_using" }),
+  });
+}

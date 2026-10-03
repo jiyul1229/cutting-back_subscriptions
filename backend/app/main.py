@@ -11,7 +11,7 @@ from sqlalchemy.dialects.sqlite import insert
 from app.database import engine
 from app.models import AppSettings, Base
 from app.routers import (
-    analytics, calendar, dashboard, decisions, notifications, payments,
+    analytics, calendar, dashboard, decisions, metrics, notifications, payments, presets,
     settings, subscriptions, usage_logs,
 )
 from app.schemas import HealthResponse
@@ -72,6 +72,8 @@ app.include_router(analytics.router)
 app.include_router(decisions.router)
 app.include_router(settings.router)
 app.include_router(notifications.router)
+app.include_router(presets.router)
+app.include_router(metrics.router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])

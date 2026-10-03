@@ -3,7 +3,7 @@ from sqlalchemy import func, select
 
 from app.decision_state import latest_decisions
 from app.calculations import (
-    cancel_window, month_bounds, month_shift, monthly_amount, next_renewal, today,
+    cancel_window, month_bounds, month_shift, monthly_amount, next_renewal, today, yearly_amount,
 )
 from app.models import PaymentRecord, Subscription
 from app.routers.dependencies import SyncedSession
@@ -27,7 +27,8 @@ def get_dashboard(db: SyncedSession):
     total = 0
     for subscription in subscriptions:
         upcoming = next_renewal(subscription, current)
-        window_start, window_end = cancel_window(subscription, current)
+        # 통신비·보험료처럼 이용 기록 대상이 아닌 고정지출은 해지 기한을 보여주지 않습니다(문서 R2).
+        window_start, window_end = cancel_window(subscription, current) if subscription.track_usage else (None, None)
         total += monthly_amount(subscription)
         items.append(DashboardSubscription(**{
             **SubscriptionResponse.model_validate(subscription).model_dump(),
@@ -43,7 +44,7 @@ def get_dashboard(db: SyncedSession):
     ))
     change_won, change_ratio = change(total, previous)
     return DashboardResponse(
-        monthly_total_won=total, previous_month_paid_won=previous or None,
+        monthly_total_won=total, yearly_total_won=sum(yearly_amount(s) for s in subscriptions), previous_month_paid_won=previous or None,
         change_won=change_won, change_ratio=change_ratio,
         active_subscription_count=len(items), subscriptions=items,
     )

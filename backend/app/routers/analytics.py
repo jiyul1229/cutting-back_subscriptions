@@ -5,7 +5,8 @@ from sqlalchemy import func, select
 
 from app.calculations import month_bounds, month_shift
 from app.models import AppSettings, PaymentRecord, Subscription
-from app.recommendations import build_recommendations
+from app.calculations import today
+from app.recommendations import evaluate, record_warnings
 from app.routers.dashboard import change
 from app.routers.dependencies import DatabaseSession, Month, SyncedSession, Year
 from app.schemas import (
@@ -69,13 +70,19 @@ def category_analysis(year: Year, month: Month, db: SyncedSession):
 
 @router.get("/recommendations", response_model=RecommendationResponse)
 def recommendations(db: DatabaseSession):
-    """해지 추천 목록과 추천대로 해지했을 때 절약 금액(이번 달 / 연간 최대)."""
+    """해지 추천 목록, 추천대로 해지했을 때 절약 금액(이번 달 / 연간 최대),
+    관찰 기간이 짧아 아직 판단하지 않는 구독('데이터 수집 중')."""
     if not db.get(AppSettings, 1).recommendation_enabled:
-        return RecommendationResponse(enabled=False, monthly_saving_won=0, yearly_saving_won=0, items=[])
-    items = build_recommendations(db)
+        return RecommendationResponse(
+            enabled=False, monthly_saving_won=0, yearly_saving_won=0, items=[], collecting=[],
+        )
+    current = today()
+    items, collecting = evaluate(db, current)
+    record_warnings(db, items, current)
     return RecommendationResponse(
         enabled=True,
         monthly_saving_won=sum(item.monthly_saving_won for item in items),
         yearly_saving_won=sum(item.yearly_saving_won for item in items),
         items=items,
+        collecting=collecting,
     )

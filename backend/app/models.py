@@ -20,7 +20,7 @@ class Subscription(Base):
     __table_args__ = (
         CheckConstraint("price_won > 0", name="ck_subscription_price_positive"),
         CheckConstraint(
-            "billing_cycle IN ('monthly', 'yearly')",
+            "billing_cycle IN ('monthly', 'yearly', 'weekly')",
             name="ck_subscription_billing_cycle",
         ),
         CheckConstraint(
@@ -30,11 +30,19 @@ class Subscription(Base):
         CheckConstraint("billing_day BETWEEN 1 AND 31", name="ck_billing_day"),
         CheckConstraint("deleted_at IS NULL OR status = 'canceled'", name="ck_deleted_is_canceled"),
         CheckConstraint("renewal_reminder_days BETWEEN 0 AND 365", name="ck_reminder_days"),
+        # 월간: 결제일 / 연간: 결제 월+일 / 매주: 요일(0=월~6=일)
         CheckConstraint(
-            "(billing_cycle = 'monthly' AND billing_month IS NULL) OR "
-            "(billing_cycle = 'yearly' AND billing_month IS NOT NULL "
-            "AND billing_month BETWEEN 1 AND 12)",
-            name="ck_billing_month",
+            "(billing_cycle = 'monthly' AND billing_day IS NOT NULL AND billing_month IS NULL "
+            "AND billing_weekday IS NULL) OR "
+            "(billing_cycle = 'yearly' AND billing_day IS NOT NULL AND billing_month IS NOT NULL "
+            "AND billing_month BETWEEN 1 AND 12 AND billing_weekday IS NULL) OR "
+            "(billing_cycle = 'weekly' AND billing_weekday BETWEEN 0 AND 6 "
+            "AND billing_day IS NULL AND billing_month IS NULL)",
+            name="ck_billing_schedule",
+        ),
+        CheckConstraint(
+            "registration_seconds IS NULL OR registration_seconds BETWEEN 0 AND 3600",
+            name="ck_registration_seconds",
         ),
         CheckConstraint(
             "billing_month IS NULL OR billing_day <= CASE "
@@ -51,8 +59,10 @@ class Subscription(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     price_won: Mapped[int] = mapped_column(Integer, nullable=False)
     billing_cycle: Mapped[str] = mapped_column(String, nullable=False)
-    billing_day: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 매주 결제면 null (billing_weekday 사용)
+    billing_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     billing_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    billing_weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     plan_name: Mapped[str | None] = mapped_column(String, nullable=True)
     memo: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -67,6 +77,15 @@ class Subscription(Base):
     track_usage: Mapped[bool] = mapped_column(Boolean, default=True)
     # Android 앱 패키지명. 예: com.netflix.mediaclient
     android_package: Mapped[str | None] = mapped_column(String, nullable=True)
+    # "아직 쓰고 있어요"로 개인화된 해지 추천 기준 (F6 민감도 조정)
+    # - 이 구독만의 미사용 기준 횟수. null이면 설정의 기준을 따름
+    low_usage_max_count_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # - 이 날까지 미사용 추천을 하지 않음
+    low_usage_snooze_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # - 같은 카테고리 중복 추천에서 제외
+    duplicate_exempt: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 앱에서 등록 화면을 연 뒤 저장까지 걸린 시간(초). 등록 부담 지표(R1)
+    registration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 자동 결제 기록을 이 날짜(한국 날짜)까지 확인했습니다. null이면 등록 전날부터 확인합니다.
     auto_payment_checked_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     # 삭제(숨김) 시각. 기록은 남겨 과거 지출 분석에 계속 포함하고, 되살릴 수 있습니다.
@@ -106,6 +125,10 @@ class UsageLog(Base):
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     device: Mapped[str | None] = mapped_column(String, nullable=True)
     memo: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 메모가 "안 쓴다/돈값 못 한다"는 신호인지. null이면 아직 분석 안 함(조회 때 키워드로 판단)
+    memo_negative: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # 분석 방법: ai(Claude) 또는 keyword
+    memo_analyzed_by: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
@@ -173,3 +196,28 @@ class AppSettings(Base):
     # 해지 추천(미사용) 기준: 최근 low_usage_window_days일 동안 low_usage_max_count회 이하
     low_usage_window_days: Mapped[int] = mapped_column(Integer, default=90)
     low_usage_max_count: Mapped[int] = mapped_column(Integer, default=2)
+
+
+class RecommendationWarning(Base):
+    """해지 추천(저이용 경고)을 보여준 기록과 사용자의 응답. 오탐률 같은 지표에 씁니다."""
+
+    __tablename__ = "recommendation_warnings"
+    __table_args__ = (
+        CheckConstraint(
+            "resolution IS NULL OR resolution IN ('still_using', 'keep', 'cancel', 'hold')",
+            name="ck_warning_resolution",
+        ),
+        # 응답 전인 경고는 구독마다 하나
+        Index("ux_open_warning", "subscription_id", unique=True, sqlite_where=text("resolved_at IS NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    subscription_id: Mapped[int] = mapped_column(ForeignKey("subscriptions.id"), nullable=False)
+    # 쉼표로 이은 추천 이유 (low_usage,duplicate_category,negative_memo)
+    reasons: Mapped[str] = mapped_column(String, nullable=False)
+    recent_usage_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    window_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    shown_on: Mapped[date] = mapped_column(Date, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # still_using = "아직 쓰고 있어요"(오탐), keep/cancel/hold = 유지·해지·보류 결정
+    resolution: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -8,7 +8,7 @@ from pydantic import (
 from app.calculations import today
 
 
-BillingCycle = Literal["monthly", "yearly"]
+BillingCycle = Literal["monthly", "yearly", "weekly"]
 SubscriptionStatus = Literal["active", "canceled", "paused"]
 UsageSource = Literal["manual", "mobile_auto", "notification"]
 # mobile_auto는 /api/usage-logs/sync로만 만듭니다.
@@ -24,6 +24,9 @@ PositiveId = Annotated[int, Field(gt=0, strict=True, le=9223372036854775807)]
 PositiveWon = Annotated[int, Field(gt=0, strict=True, le=9223372036854775807)]
 BillingDay = Annotated[int, Field(ge=1, le=31, strict=True)]
 BillingMonth = Annotated[int, Field(ge=1, le=12, strict=True)]
+# 매주 결제 요일. 0=월요일 ... 6=일요일
+BillingWeekday = Annotated[int, Field(ge=0, le=6, strict=True)]
+RegistrationSeconds = Annotated[int, Field(ge=0, le=3600, strict=True)]
 SubscriptionName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 AndroidPackage = Annotated[str, StringConstraints(
     strip_whitespace=True, max_length=255,
@@ -67,8 +70,10 @@ class SubscriptionCreate(BaseModel):
     name: SubscriptionName
     price_won: PositiveWon
     billing_cycle: BillingCycle = "monthly"
-    billing_day: BillingDay
+    # 월간·연간은 billing_day 필수, 매주는 billing_weekday 필수
+    billing_day: BillingDay | None = None
     billing_month: BillingMonth | None = None
+    billing_weekday: BillingWeekday | None = None
     category: str | None = None
     plan_name: OptionalText | None = None
     memo: OptionalText | None = None
@@ -79,9 +84,21 @@ class SubscriptionCreate(BaseModel):
     include_in_analysis: StrictBool = True
     track_usage: StrictBool = True
     android_package: AndroidPackage | None = None
+    # 앱이 등록 화면을 연 뒤 저장까지 걸린 시간(초). 등록 부담 지표용, 선택
+    registration_seconds: RegistrationSeconds | None = None
 
     @model_validator(mode="after")
     def validate_billing_schedule(self):
+        if self.billing_cycle == "weekly":
+            if self.billing_weekday is None:
+                raise ValueError("billing_weekday (0=Mon..6=Sun) is required for weekly subscriptions")
+            if self.billing_day is not None or self.billing_month is not None:
+                raise ValueError("billing_day and billing_month must be null for weekly subscriptions")
+            return self
+        if self.billing_weekday is not None:
+            raise ValueError("billing_weekday is only for weekly subscriptions")
+        if self.billing_day is None:
+            raise ValueError("billing_day is required for monthly and yearly subscriptions")
         if self.billing_cycle == "monthly":
             if self.billing_month is not None:
                 raise ValueError("billing_month must be null for monthly subscriptions")
@@ -104,6 +121,7 @@ class SubscriptionUpdate(BaseModel):
     billing_cycle: BillingCycle | None = None
     billing_day: BillingDay | None = None
     billing_month: BillingMonth | None = None
+    billing_weekday: BillingWeekday | None = None
     category: str | None = None
     plan_name: OptionalText | None = None
     memo: OptionalText | None = None
@@ -115,7 +133,8 @@ class SubscriptionUpdate(BaseModel):
     track_usage: StrictBool | None = None
     android_package: AndroidPackage | None = None
 
-    @field_validator("name", "price_won", "billing_cycle", "billing_day", "status",
+    # billing_day는 매주 결제로 바꿀 때 null을 보내야 해서 null을 허용합니다(최종 규칙은 합쳐서 검증).
+    @field_validator("name", "price_won", "billing_cycle", "status",
                      "notification_enabled", "renewal_reminder_days", "include_in_analysis", "track_usage")
     @classmethod
     def reject_null(cls, value):
@@ -132,8 +151,9 @@ class SubscriptionResponse(BaseModel):
     name: str
     price_won: int
     billing_cycle: BillingCycle
-    billing_day: int
+    billing_day: int | None
     billing_month: int | None
+    billing_weekday: int | None
     category: str | None
     plan_name: str | None
     memo: str | None
@@ -155,6 +175,10 @@ class SubscriptionResponse(BaseModel):
     cancel_window_end: date | None = None
     # 가장 최근 결정(유지/해지/보류). 기록이 없으면 null. 구독 상태(status)를 바꾸지는 않습니다.
     latest_decision: TagDecision | None = None
+    # "아직 쓰고 있어요"로 개인화된 해지 추천 기준 (null/false면 설정 기준 그대로)
+    low_usage_max_count_override: int | None
+    low_usage_snooze_until: date | None
+    duplicate_exempt: bool
 
 
 class LegacyCheckInCreate(BaseModel):
@@ -186,6 +210,9 @@ class UsageLogResponse(BaseModel):
     duration_minutes: int | None
     device: UsageDevice | None
     memo: str | None
+    # 메모가 '안 쓴다/돈값 못 한다'는 신호인지, 분석 방법(ai 또는 keyword). 메모가 없으면 null
+    memo_negative: bool | None
+    memo_analyzed_by: Literal["ai", "keyword"] | None
     created_at: UTCDateTime
     updated_at: UTCDateTime
 
@@ -364,6 +391,8 @@ class DashboardSubscription(SubscriptionResponse):
 
 class DashboardResponse(BaseModel):
     monthly_total_won: int
+    # 연 환산 고정비 총액 (월간×12, 연간 그대로, 매주×52)
+    yearly_total_won: int
     # 전월 대비: 지난달 실제 결제액과 비교. 지난달 결제가 없으면 세 값 모두 null.
     previous_month_paid_won: int | None
     change_won: int | None
@@ -377,8 +406,11 @@ class CalendarItem(BaseModel):
     subscription_id: int
     name: str
     amount_won: int
-    type: Literal["scheduled", "paid"]
+    # cancel_deadline: 다음 결제를 피하려면 이 날까지 해지 (결제일 하루 전)
+    type: Literal["scheduled", "paid", "cancel_deadline"]
     payment_id: int | None = None
+    # cancel_deadline 항목의 결제일
+    renewal_date: date | None = None
 
 
 class MonthlyAnalysisResponse(BaseModel):
@@ -404,10 +436,34 @@ class CategoryAnalysisResponse(BaseModel):
 class NotificationCandidate(BaseModel):
     subscription_id: int
     name: str
-    type: Literal["renewal", "cancel_window", "recommendation"]
+    # weekly_check: 일주일 동안 이용 기록이 없어 "이번 주에 썼나요?"라고 묻는 알림
+    type: Literal["renewal", "cancel_window", "weekly_check", "recommendation"]
     next_renewal_date: date | None = None
     d_day: int | None = None
+    days_without_record: int | None = None
     reasons: list[RecommendationReason] | None = None
+
+
+class ReminderScheduleItem(BaseModel):
+    """폰에서 미리 예약할 알림. id가 같으면 같은 알림이므로 다시 예약할 때 기존 것을 지우고 넣습니다."""
+    id: str
+    subscription_id: int
+    name: str
+    type: Literal["renewal", "cancel_window", "weekly_check"]
+    # 한국 시간 기준 발송 시각 (+09:00)
+    fire_at: datetime
+    renewal_date: date | None = None
+    d_day_at_fire: int | None = None
+    amount_won: int | None = None
+
+
+class ServicePreset(BaseModel):
+    name: str
+    plan_name: str | None
+    price_won: int
+    billing_cycle: BillingCycle
+    category: str
+    android_package: str | None
 
 
 class RecommendationItem(BaseModel):
@@ -426,6 +482,16 @@ class RecommendationItem(BaseModel):
     cost_per_use_won: int | None
     monthly_saving_won: int
     yearly_saving_won: int
+    # "아직 쓰고 있어요"로 이 구독만의 기준이 적용 중인지
+    personalized: bool
+
+
+class CollectingItem(BaseModel):
+    """관찰 기간이 짧아 아직 판단하지 않는 구독 ('데이터 수집 중')."""
+    subscription_id: int
+    name: str
+    observation_days: int
+    needed_days: int
 
 
 class RecommendationResponse(BaseModel):
@@ -433,3 +499,42 @@ class RecommendationResponse(BaseModel):
     monthly_saving_won: int
     yearly_saving_won: int
     items: list[RecommendationItem]
+    collecting: list[CollectingItem]
+
+
+class RecommendationFeedbackCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # 해지 추천 카드의 "아직 쓰고 있어요"
+    response: Literal["still_using"]
+
+
+class RecommendationFeedbackResponse(BaseModel):
+    subscription_id: int
+    # 무엇을 바꿨는지: threshold(이 구독 기준 횟수 낮춤), snooze(기간 동안 미사용 추천 멈춤),
+    # duplicate_exempt(중복 추천 제외)
+    applied: list[Literal["threshold", "snooze", "duplicate_exempt"]]
+    low_usage_max_count_override: int | None
+    low_usage_snooze_until: date | None
+    duplicate_exempt: bool
+
+
+class WeeklyCheckins(BaseModel):
+    week_start: date
+    count: int
+
+
+class MetricsResponse(BaseModel):
+    """문서 R1·R3 판단 지표."""
+    registration_count: int
+    registration_seconds_avg: float | None
+    registration_seconds_median: float | None
+    # 사용자가 직접 남긴 체크인(수기·알림 응답). 자동 측정은 제외
+    checkins_by_week: list[WeeklyCheckins]
+    checkins_per_week_avg: float
+    warnings_shown: int
+    warnings_answered: int
+    still_using_count: int
+    # 응답한 경고 중 "아직 쓰고 있어요" 비율 (오탐률). 응답이 없으면 null
+    false_positive_rate: float | None
+    # 보여준 경고 중 유지·해지·보류를 결정한 비율
+    decision_rate: float | None

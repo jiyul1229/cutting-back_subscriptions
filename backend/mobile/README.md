@@ -5,7 +5,7 @@
 | 파일 | 역할 |
 | --- | --- |
 | `modules/usage-stats/` | Android 앱별 사용 시간을 읽는 네이티브 모듈 (Kotlin) |
-| `src/usageTracking.ts` | 자동 측정 업로드, 수기 기록, 이용 확인 알림 함수 |
+| `src/usageTracking.ts` | 자동 측정 업로드, 수기 기록, 이용 확인 알림, 결제·해지 기한·주간 기록 알림 예약, "아직 쓰고 있어요" |
 
 ## 지원 범위
 
@@ -54,5 +54,10 @@ Expo Go 대신 우리 앱 전용 Expo Go를 직접 만드는 것입니다. 비�
 3. 앱이 켜질 때 `syncAutoUsage()` 호출 (최근 7일 재전송, 서버가 덮어씀)
 4. 앱 시작 시 `scheduleUsageCheck()` 호출 → 매일 설정 시각에 알림 →
    알림을 누르면 `getUsageChecks()` 목록에서 `answerUsageCheck(id, "tv")`
+5. 앱 시작 시, 구독을 추가·수정한 뒤, 설정을 바꾼 뒤 `scheduleReminders()` 호출
+   → 서버의 `/api/notifications/schedule`을 받아 결제 알림(3일 전), 해지 기한 알림(5일 전),
+   "이번 주에 썼나요?"(7일 기록 없음)를 폰에 예약합니다. 여러 번 불러도 중복되지 않습니다.
+   expo-notifications의 날짜 예약은 앱이 꺼져 있어도 울립니다. 폰을 재부팅한 뒤에는 앱을 한 번 열면 다시 예약됩니다.
+6. 해지 추천 카드의 "아직 쓰고 있어요" 버튼 → `markStillUsing(id)`
 
 자동 측정 날짜는 서버와 같은 한국 시간 기준입니다.

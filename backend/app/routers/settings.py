@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Response
 from sqlalchemy import delete
 
-from app.models import AppSettings, DecisionHistory, PaymentRecord, Subscription, UsageLog
+from app.models import (
+    AppSettings, DecisionHistory, PaymentRecord, RecommendationWarning, Subscription, UsageLog,
+)
 from app.routers.dependencies import DatabaseSession
 from app.schemas import ResetDataRequest, SettingsResponse, SettingsUpdate
 
@@ -25,11 +27,11 @@ def update_settings(payload: SettingsUpdate, db: DatabaseSession):
 
 @router.post("/reset-data", status_code=204)
 def reset_data(payload: ResetDataRequest, db: DatabaseSession) -> Response:
-    """설정 화면의 '전체 초기화'. 구독·이용 기록·결제·결정을 모두 지웁니다. 설정값은 유지합니다.
+    """설정 화면의 '전체 초기화'. 구독·이용 기록·결제·결정·추천 기록을 모두 지웁니다. 설정값은 유지합니다.
 
     되돌릴 수 없으므로 {"confirm": true}를 보내야만 실행합니다.
     """
-    for model in (DecisionHistory, UsageLog, PaymentRecord, Subscription):
+    for model in (RecommendationWarning, DecisionHistory, UsageLog, PaymentRecord, Subscription):
         db.execute(delete(model))
     db.commit()
     return Response(status_code=204)

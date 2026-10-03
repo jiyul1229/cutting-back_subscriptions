@@ -48,7 +48,7 @@ class FeatureApiTests(LiveApiTestCase):
 
     def test_empty_screens_and_openapi(self):
         self.assertEqual(self.request("GET", "/api/dashboard"), {
-            "monthly_total_won": 0, "previous_month_paid_won": None, "change_won": None, "change_ratio": None,
+            "monthly_total_won": 0, "yearly_total_won": 0, "previous_month_paid_won": None, "change_won": None, "change_ratio": None,
             "active_subscription_count": 0, "subscriptions": [],
         })
         self.assertEqual(self.request("GET", "/api/calendar?year=2026&month=9"), [])
@@ -203,7 +203,8 @@ class FeatureApiTests(LiveApiTestCase):
         sid = self.create_subscription(billing_day=current.day)["id"]
         self.age_subscription(sid, 8)
         notices = self.request("GET", "/api/notifications")
-        self.assertEqual({item["type"] for item in notices}, {"renewal"})  # 7일 미사용 알림은 없음
+        # 등록 8일째인데 이용 기록이 없으므로 "이번 주에 썼나요?"도 함께 옵니다.
+        self.assertEqual({item["type"] for item in notices}, {"renewal", "weekly_check"})
         values = {"notifications_enabled": False, "recommendation_enabled": False}
         self.assertEqual(self.request("PATCH", "/api/settings", values), {
             **values, "auto_tracking_enabled": False, "usage_check_enabled": True, "usage_check_time": "21:00",
@@ -212,7 +213,7 @@ class FeatureApiTests(LiveApiTestCase):
         self.assertEqual(self.request("GET", "/api/settings").items() >= values.items(), True)
         self.assertEqual(self.request("GET", "/api/notifications"), [])
         self.request("PATCH", "/api/settings", {"notifications_enabled": True})
-        self.assertEqual(len(self.request("GET", "/api/notifications")), 1)
+        self.assertEqual(len(self.request("GET", "/api/notifications")), 2)
         self.request("PATCH", f"/api/subscriptions/{sid}", {"notification_enabled": False})
         self.assertEqual(self.request("GET", "/api/notifications"), [])
         self.request("PATCH", f"/api/subscriptions/{sid}", {"notification_enabled": True})
@@ -311,13 +312,14 @@ class CalculationTests(unittest.TestCase):
         self.db.commit()
         with patch("app.routers.notifications.today", return_value=date(2026, 9, 3)):
             self.assertEqual([n.type for n in notification_candidates(self.db)], ["renewal"])
+        # 마지막 기록(9/1)에서 7일이 지나면 "이번 주에 썼나요?"
         with patch("app.routers.notifications.today", return_value=date(2026, 9, 8)):
-            self.assertEqual([n.type for n in notification_candidates(self.db)], ["renewal"])
+            self.assertEqual([n.type for n in notification_candidates(self.db)], ["renewal", "weekly_check"])
         sub.renewal_reminder_days = 0
         self.db.commit()
         # 결제 알림 기간이 아니어도 결제 5일 전~하루 전이면 해지 권장 기간 알림
         with patch("app.routers.notifications.today", return_value=date(2026, 9, 9)):
-            self.assertEqual([n.type for n in notification_candidates(self.db)], ["cancel_window"])
+            self.assertEqual([n.type for n in notification_candidates(self.db)], ["cancel_window", "weekly_check"])
         sub.status = "canceled"
         self.db.commit()
         with patch("app.routers.notifications.today", return_value=date(2026, 9, 10)):

@@ -117,7 +117,8 @@ class FigmaGapApiTests(LiveApiTestCase):
                          [netflix])
         self.request("PATCH", "/api/settings", {"recommendation_enabled": False})
         self.assertEqual(self.request("GET", "/api/analytics/recommendations"),
-                         {"enabled": False, "monthly_saving_won": 0, "yearly_saving_won": 0, "items": []})
+                         {"enabled": False, "monthly_saving_won": 0, "yearly_saving_won": 0, "items": [],
+                          "collecting": []})
         self.assertNotIn("recommendation", [n["type"] for n in self.request("GET", "/api/notifications")])
 
     def test_fixed_expense_is_not_tracked(self):

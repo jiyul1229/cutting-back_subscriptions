@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.auto_payments import ensure_auto_payments
-from app.calculations import cancel_window, next_renewal, today
+from app.calculations import cancel_window, monthly_amount, next_renewal, today
 from app.decision_state import latest_decisions
 from app.models import Subscription, utc_now
 from app.routers.dependencies import DatabaseSession, SubscriptionId, get_subscription_or_404
@@ -24,8 +24,23 @@ def to_response(subscription: Subscription, decision: str | None = None) -> Subs
         current = today()
         response.next_renewal_date = next_renewal(subscription, current)
         response.d_day = (response.next_renewal_date - current).days
-        response.cancel_window_start, response.cancel_window_end = cancel_window(subscription, current)
+        # 통신비·보험료처럼 이용 기록 대상이 아닌 고정지출은 해지 기한을 보여주지 않습니다(문서 R2).
+        if subscription.track_usage:
+            response.cancel_window_start, response.cancel_window_end = cancel_window(subscription, current)
     return response
+
+
+# 정렬 키: (응답, 월 환산 금액) 쌍을 받습니다.
+SORT_KEYS = {
+    "id": lambda pair: pair[0].id,
+    "name": lambda pair: (pair[0].name, pair[0].id),
+    "price": lambda pair: (pair[1], pair[0].id),
+    "category": lambda pair: (pair[0].category or "~", pair[0].name, pair[0].id),
+    # 해지·일시정지 구독(다음 결제일 없음)은 뒤로
+    "next_renewal": lambda pair: (
+        pair[0].next_renewal_date is None, pair[0].next_renewal_date or pair[0].created_at.date(), pair[0].id,
+    ),
+}
 
 
 def commit_or_conflict(db: DatabaseSession) -> None:
@@ -53,14 +68,26 @@ def respond(db, subscription: Subscription) -> SubscriptionResponse:
 
 @router.get("", response_model=list[SubscriptionResponse])
 def list_subscriptions(
-    db: DatabaseSession, include_deleted: Annotated[bool, Query()] = False,
+    db: DatabaseSession,
+    include_deleted: Annotated[bool, Query()] = False,
+    category: Annotated[str | None, Query(description="이 카테고리만")] = None,
+    sort: Annotated[Literal["id", "name", "price", "category", "next_renewal"], Query()] = "id",
+    order: Annotated[Literal["asc", "desc"], Query()] = "asc",
 ):
+    """구독 목록. sort=price는 월 환산 금액, next_renewal은 다음 결제일 순입니다."""
     query = select(Subscription)
     if not include_deleted:
         query = query.where(Subscription.deleted_at.is_(None))
+    if category is not None:
+        query = query.where(Subscription.category == category)
     subscriptions = list(db.scalars(query.order_by(Subscription.id)))
     decisions = latest_decisions(db, [subscription.id for subscription in subscriptions])
-    return [to_response(subscription, decisions.get(subscription.id)) for subscription in subscriptions]
+    pairs = [
+        (to_response(subscription, decisions.get(subscription.id)), monthly_amount(subscription))
+        for subscription in subscriptions
+    ]
+    pairs.sort(key=SORT_KEYS[sort], reverse=order == "desc")
+    return [response for response, _ in pairs]
 
 
 @router.get("/{id}", response_model=SubscriptionResponse)

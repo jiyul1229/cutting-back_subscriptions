@@ -7,6 +7,7 @@ from app.calculations import (
     BUSINESS_TZ, COMPARISON_DAYS, USAGE_EVALUATION_DAYS, USAGE_WINDOWS, business_date, today,
 )
 from app.decision_state import cancel_tagged
+from app.memo_analysis import analyze_memo
 from app.models import AppSettings, PaymentRecord, Subscription, UsageLog
 from app.routers.dependencies import (
     DatabaseSession, SubscriptionId, SyncedSession, get_subscription_or_404, validate_date_range,
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/api", tags=["usage"])
 def save_log(subscription_id: int, payload: UsageLogCreate, db: DatabaseSession) -> UsageLog:
     get_subscription_or_404(subscription_id, db)
     log = UsageLog(subscription_id=subscription_id, **payload.model_dump())
+    log.memo_negative, log.memo_analyzed_by = analyze_memo(log.memo)
     db.add(log)
     db.commit()
     db.refresh(log)
@@ -139,8 +141,11 @@ def update_usage_log(log_id: SubscriptionId, payload: UsageLogUpdate, db: Databa
     log = db.get(UsageLog, log_id)
     if log is None:
         raise HTTPException(404, "Usage log not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    changes = payload.model_dump(exclude_unset=True)
+    for field, value in changes.items():
         setattr(log, field, value)
+    if "memo" in changes:
+        log.memo_negative, log.memo_analyzed_by = analyze_memo(log.memo)
     db.commit()
     db.refresh(log)
     return log

@@ -336,7 +336,8 @@ class ApiTests(LiveApiTestCase):
                     connection.execute(sql, values)
                 connection.rollback()
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        self.assertEqual(tables, {"subscriptions", "usage_logs", "payment_records", "decision_history", "app_settings"})
+        self.assertEqual(tables, {"subscriptions", "usage_logs", "payment_records", "decision_history",
+                                  "app_settings", "recommendation_warnings"})
         columns = {row[1]: row[2] for row in connection.execute("PRAGMA table_info(payment_records)")}
         self.assertEqual(columns["amount_won"], "INTEGER")
         self.assertEqual(columns["paid_date"], "DATE")
