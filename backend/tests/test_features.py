@@ -68,7 +68,7 @@ class FeatureApiTests(LiveApiTestCase):
     def test_subscription_options(self):
         subscription = self.create_subscription()
         self.assertTrue(subscription["notification_enabled"])
-        self.assertEqual(subscription["renewal_reminder_days"], 7)
+        self.assertEqual(subscription["renewal_reminder_days"], 3)
         self.assertTrue(subscription["include_in_analysis"])
         root = f"/api/subscriptions/{subscription['id']}"
         values = {"notification_enabled": False, "renewal_reminder_days": 0, "include_in_analysis": False}
@@ -165,7 +165,7 @@ class FeatureApiTests(LiveApiTestCase):
     def test_decisions_do_not_change_status(self):
         sid = self.create_subscription()["id"]
         root = f"/api/subscriptions/{sid}"
-        for decision in ("keep", "cancel", "postpone"):
+        for decision in ("keep", "cancel", "hold"):
             record = self.request("POST", root + "/decisions", {"decision": decision, "memo": "test"}, 201)
             self.assertEqual(record["decision"], decision)
             self.assertTrue(record["decided_at"].endswith("Z"))
@@ -304,6 +304,7 @@ class CalculationTests(unittest.TestCase):
     def test_notification_boundaries(self):
         sub = self.sub()
         sub.billing_day = 10
+        sub.renewal_reminder_days = 7
         sub.created_at = datetime(2026, 9, 1)
         self.db.add(UsageLog(subscription_id=sub.id, used_date=date(2026, 9, 1)))
         self.db.commit()
@@ -313,8 +314,9 @@ class CalculationTests(unittest.TestCase):
             self.assertEqual([n.type for n in notification_candidates(self.db)], ["renewal", "no_usage"])
         sub.renewal_reminder_days = 0
         self.db.commit()
+        # 결제 알림 기간이 아니어도 결제 5일 전~하루 전이면 해지 권장 기간 알림
         with patch("app.routers.notifications.today", return_value=date(2026, 9, 9)):
-            self.assertEqual([n.type for n in notification_candidates(self.db)], ["no_usage"])
+            self.assertEqual([n.type for n in notification_candidates(self.db)], ["cancel_window", "no_usage"])
         sub.status = "canceled"
         self.db.commit()
         with patch("app.routers.notifications.today", return_value=date(2026, 9, 10)):
@@ -374,7 +376,7 @@ class MigrationTests(unittest.TestCase):
             try:
                 with Session(engine) as db:
                     sub = db.get(Subscription, 7)
-                    self.assertEqual(sub.renewal_reminder_days, 7)
+                    self.assertEqual(sub.renewal_reminder_days, 3)
                     self.assertTrue(sub.notification_enabled)
                     log = db.get(UsageLog, 9)
                     self.assertEqual(log.used_date, date(2026, 9, 30))

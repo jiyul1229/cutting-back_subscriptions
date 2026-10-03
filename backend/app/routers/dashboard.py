@@ -1,10 +1,12 @@
 from fastapi import APIRouter
 from sqlalchemy import func, select
 
-from app.calculations import month_bounds, month_shift, next_renewal, scheduled_date, today
+from app.decision_state import latest_decisions
+from app.calculations import (
+    cancel_window, month_bounds, month_shift, next_renewal, scheduled_date, today,
+)
 from app.models import PaymentRecord, Subscription
 from app.routers.dependencies import SyncedSession
-from app.routers.subscriptions import latest_decisions
 from app.schemas import DashboardResponse, DashboardSubscription, SubscriptionResponse
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -25,12 +27,14 @@ def get_dashboard(db: SyncedSession):
     total = 0
     for subscription in subscriptions:
         upcoming = next_renewal(subscription, current)
+        window_start, window_end = cancel_window(subscription, current)
         if scheduled_date(subscription, current.year, current.month) is not None:
             total += subscription.price_won
         items.append(DashboardSubscription(**{
             **SubscriptionResponse.model_validate(subscription).model_dump(),
             "next_renewal_date": upcoming, "d_day": (upcoming - current).days,
             "latest_decision": decisions.get(subscription.id),
+            "cancel_window_start": window_start, "cancel_window_end": window_end,
         }))
     items.sort(key=lambda item: (item.next_renewal_date, item.id))
     # 전월 대비: 이번 달 예상 구독료와 지난달 실제 결제액(분석 제외·해지·삭제 구독 포함)을 비교합니다.

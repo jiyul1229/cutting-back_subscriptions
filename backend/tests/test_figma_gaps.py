@@ -144,7 +144,8 @@ class FigmaGapApiTests(LiveApiTestCase):
         sid = self.create_subscription()["id"]
         detail = f"/api/subscriptions/{sid}"
         self.assertIsNone(self.request("GET", detail)["latest_decision"])
-        self.request("POST", detail + "/decisions", {"decision": "postpone"}, 201)
+        self.request("POST", detail + "/decisions", {"decision": "hold"}, 201)
+        self.request("POST", detail + "/decisions", {"decision": "postpone"}, 422)  # 앱과 같은 이름 hold만
         self.request("POST", detail + "/decisions", {"decision": "keep"}, 201)
         self.assertEqual(self.request("GET", detail)["latest_decision"], "keep")
         self.assertEqual(self.request("GET", "/api/subscriptions")[0]["latest_decision"], "keep")

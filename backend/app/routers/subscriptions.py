@@ -7,25 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.auto_payments import ensure_auto_payments
-from app.calculations import next_renewal, today
-from app.models import DecisionHistory, Subscription, utc_now
+from app.calculations import cancel_window, next_renewal, today
+from app.decision_state import latest_decisions
+from app.models import Subscription, utc_now
 from app.routers.dependencies import DatabaseSession, SubscriptionId, get_subscription_or_404
 from app.schemas import SubscriptionCreate, SubscriptionResponse, SubscriptionUpdate
 
 
 router = APIRouter(prefix="/api/subscriptions", tags=["subscriptions"])
-
-
-def latest_decisions(db, ids: list[int]) -> dict[int, str]:
-    """구독별 가장 최근 결정. 결정 시각, 같으면 나중에 기록한 순서로 정렬해 마지막 값을 씁니다."""
-    if not ids:
-        return {}
-    rows = db.execute(
-        select(DecisionHistory.subscription_id, DecisionHistory.decision)
-        .where(DecisionHistory.subscription_id.in_(ids))
-        .order_by(DecisionHistory.decided_at, DecisionHistory.id)
-    )
-    return {subscription_id: decision for subscription_id, decision in rows}
 
 
 def to_response(subscription: Subscription, decision: str | None = None) -> SubscriptionResponse:
@@ -35,6 +24,7 @@ def to_response(subscription: Subscription, decision: str | None = None) -> Subs
         current = today()
         response.next_renewal_date = next_renewal(subscription, current)
         response.d_day = (response.next_renewal_date - current).days
+        response.cancel_window_start, response.cancel_window_end = cancel_window(subscription, current)
     return response
 
 

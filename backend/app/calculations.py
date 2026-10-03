@@ -9,6 +9,10 @@ BUSINESS_TZ = timezone(timedelta(hours=9))  # 한국 날짜, 별도 tzdata 의�
 USAGE_WINDOWS = (7, 30, 90)
 COMPARISON_DAYS = 30
 INACTIVITY_DAYS = 7
+# 해지 권장 기간: 다음 결제일 CANCEL_WINDOW_DAYS일 전부터 하루 전까지 (앱 코어 엔진과 같은 기준)
+CANCEL_WINDOW_DAYS = 5
+# 메모에 이런 표현이 있으면 해지 추천 이유로 덧붙입니다.
+NEGATIVE_MEMO_KEYWORDS = ("안 봄", "안봄", "재미없", "안 씀", "안씀", "해지")
 # 해지 추천(미사용): 관찰 30일 이상이고 최근 90일 이용이 2회 이하. 앱 코어 엔진과 같은 기준입니다.
 LOW_USAGE_WINDOW_DAYS = 90
 LOW_USAGE_MAX_COUNT = 2
@@ -44,6 +48,11 @@ def scheduled_date(subscription: Subscription, year: int, month: int) -> date | 
         return None
     day = min(subscription.billing_day, calendar.monthrange(year, month)[1])
     return date(year, month, day)
+
+
+def cancel_window(subscription: Subscription, on_date: date) -> tuple[date, date]:
+    due = next_renewal(subscription, on_date)
+    return due - timedelta(days=CANCEL_WINDOW_DAYS), due - timedelta(days=1)
 
 
 def next_renewal(subscription: Subscription, on_date: date) -> date:

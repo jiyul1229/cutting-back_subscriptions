@@ -60,7 +60,7 @@ class Subscription(Base):
     started_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String, default="active", nullable=False)
     notification_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    renewal_reminder_days: Mapped[int] = mapped_column(Integer, default=7)
+    renewal_reminder_days: Mapped[int] = mapped_column(Integer, default=3)
     include_in_analysis: Mapped[bool] = mapped_column(Boolean, default=True)
     # 이용 기록 대상 여부. 보험료·통신비처럼 이용 횟수가 의미 없는 고정지출은 false로 두어
     # 미사용 알림·해지 추천·이용 확인에서 뺍니다.
@@ -137,7 +137,7 @@ class PaymentRecord(Base):
 class DecisionHistory(Base):
     __tablename__ = "decision_history"
     __table_args__ = (
-        CheckConstraint("decision IN ('keep', 'cancel', 'postpone')", name="ck_decision"),
+        CheckConstraint("decision IN ('keep', 'cancel', 'hold')", name="ck_decision"),
         Index("ix_decision_subscription_time", "subscription_id", "decided_at"),
     )
 

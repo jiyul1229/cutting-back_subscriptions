@@ -6,6 +6,7 @@ from sqlalchemy import case, func, select
 from app.calculations import (
     BUSINESS_TZ, COMPARISON_DAYS, USAGE_EVALUATION_DAYS, USAGE_WINDOWS, business_date, today,
 )
+from app.decision_state import cancel_tagged
 from app.models import AppSettings, PaymentRecord, Subscription, UsageLog
 from app.routers.dependencies import (
     DatabaseSession, SubscriptionId, SyncedSession, get_subscription_or_404, validate_date_range,
@@ -97,7 +98,7 @@ def get_usage_checks(db: DatabaseSession):
     if enabled:
         logs = db.execute(select(UsageLog.subscription_id, UsageLog.source, UsageLog.duration_minutes)
                           .where(UsageLog.used_date == current)).all()
-        answered = {sid for sid, source, _ in logs if source != "mobile_auto"}
+        answered = {sid for sid, source, _ in logs if source != "mobile_auto"} | cancel_tagged(db)
         auto_minutes = {sid: minutes for sid, source, minutes in logs if source == "mobile_auto"}
         for subscription in db.scalars(select(Subscription).where(
             Subscription.status == "active", Subscription.track_usage.is_(True)

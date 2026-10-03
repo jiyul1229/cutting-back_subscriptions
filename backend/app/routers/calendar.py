@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.calculations import month_bounds, scheduled_date, today
+from app.decision_state import cancel_tagged
 from app.models import PaymentRecord, Subscription
 from app.routers.dependencies import SyncedSession, Month, Year
 from app.schemas import CalendarItem
@@ -16,12 +17,12 @@ def get_calendar(year: Year, month: Month, db: SyncedSession):
     records = db.execute(select(PaymentRecord, Subscription.name).join(Subscription).where(
         PaymentRecord.paid_date >= start, PaymentRecord.paid_date <= end
     )).all()
-    paid_ids = {payment.subscription_id for payment, _ in records}
+    # 이번 달 결제 기록이 있거나 '해지' 태그를 붙인 구독은 예정 항목을 표시하지 않습니다.
+    hidden_ids = {payment.subscription_id for payment, _ in records} | cancel_tagged(db)
     items = []
     for subscription in db.scalars(select(Subscription).where(Subscription.status == "active")):
         scheduled = scheduled_date(subscription, year, month)
-        # 이번 달 결제 기록이 이미 있으면 예정 항목은 중복이므로 표시하지 않습니다.
-        if scheduled is not None and scheduled >= current and subscription.id not in paid_ids:
+        if scheduled is not None and scheduled >= current and subscription.id not in hidden_ids:
             items.append(CalendarItem(
                 date=scheduled, subscription_id=subscription.id, name=subscription.name,
                 amount_won=subscription.price_won, type="scheduled",

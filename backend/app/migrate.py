@@ -72,6 +72,8 @@ def migrate_database(path: Path) -> Path:
                 for raw in source.execute(f'SELECT * FROM "{table.name}"'):
                     row = dict(raw)
                     row.pop("hide_service_names", None)  # 디자인에 없어 삭제한 설정
+                    if table.name == "decision_history" and row.get("decision") == "postpone":
+                        row["decision"] = "hold"  # 앱과 이름을 맞춤
                     if table.name == "subscriptions" and "renewal_date" in row:
                         renewal = date.fromisoformat(row.pop("renewal_date"))
                         row.setdefault("billing_day", renewal.day)

@@ -15,8 +15,8 @@ UsageSource = Literal["manual", "mobile_auto", "notification"]
 ManualUsageSource = Literal["manual", "notification"]
 UsageDevice = Literal["phone", "tablet", "tv", "pc", "other"]
 PaymentSource = Literal["manual", "auto"]
-Decision = Literal["keep", "cancel", "postpone"]
-RecommendationReason = Literal["low_usage", "duplicate_category"]
+Decision = Literal["keep", "cancel", "hold"]
+RecommendationReason = Literal["low_usage", "duplicate_category", "negative_memo"]
 ReminderDays = Annotated[int, Field(ge=0, le=365, strict=True)]
 PositiveId = Annotated[int, Field(gt=0, strict=True, le=9223372036854775807)]
 PositiveWon = Annotated[int, Field(gt=0, strict=True, le=9223372036854775807)]
@@ -73,7 +73,7 @@ class SubscriptionCreate(BaseModel):
     started_on: PastDate | None = None
     status: SubscriptionStatus = "active"
     notification_enabled: StrictBool = True
-    renewal_reminder_days: ReminderDays = 7
+    renewal_reminder_days: ReminderDays = 3
     include_in_analysis: StrictBool = True
     track_usage: StrictBool = True
     android_package: AndroidPackage | None = None
@@ -148,6 +148,9 @@ class SubscriptionResponse(BaseModel):
     # 활성 구독만 계산합니다. 해지·일시정지·삭제면 null.
     next_renewal_date: date | None = None
     d_day: int | None = None
+    # 해지 권장 기간 (다음 결제일 5일 전 ~ 하루 전). 활성 구독만.
+    cancel_window_start: date | None = None
+    cancel_window_end: date | None = None
     # 가장 최근 결정(유지/해지/보류). 기록이 없으면 null. 구독 상태(status)를 바꾸지는 않습니다.
     latest_decision: Decision | None = None
 
@@ -314,6 +317,12 @@ class UsageCheckResponse(BaseModel):
     items: list[UsageCheckItem]
 
 
+class ResetDataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # 실수 방지용. true를 보내야만 지웁니다.
+    confirm: Literal[True]
+
+
 class SettingsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     notifications_enabled: bool
@@ -387,7 +396,7 @@ class CategoryAnalysisResponse(BaseModel):
 class NotificationCandidate(BaseModel):
     subscription_id: int
     name: str
-    type: Literal["renewal", "no_usage", "recommendation"]
+    type: Literal["renewal", "cancel_window", "no_usage", "recommendation"]
     next_renewal_date: date | None = None
     d_day: int | None = None
     days_without_usage: int | None = None
@@ -404,6 +413,8 @@ class RecommendationItem(BaseModel):
     usage_count_90d: int
     # 같은 카테고리의 다른 활성 구독 (duplicate_category일 때)
     duplicate_with: list[int]
+    # 월 요금 ÷ 월평균 이용 횟수(90일 이용/3). 이용 0회면 null
+    cost_per_use_won: int | None
     monthly_saving_won: int
     yearly_saving_won: int
 

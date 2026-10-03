@@ -100,6 +100,7 @@ app/
   calculations.py         # 한국 날짜, 관찰 기간 정책, 반복 결제 계산
   auto_payments.py        # 지난 결제일의 결제 기록 자동 생성
   recommendations.py      # 해지 추천 계산 (미사용 + 같은 카테고리 중복)
+  decision_state.py       # 구독별 최근 결정(유지/해지/보류 태그)
   migrate.py              # 명시적 백업/변환/검증/교체
   routers/
     __init__.py
@@ -118,6 +119,7 @@ tests/
   test_features.py        # 새 화면/계산/마이그레이션 검증
   test_usage_tracking.py  # 이용 시간 자동·수기 기록, 이용 확인, 자동 결제 검증
   test_figma_gaps.py      # 구독 필드, 삭제, 전월 대비, 월별 추이, 해지 추천 검증
+  test_frontend_parity.py # 앱 기준 맞춤: 해지 권장 기간, 해지 태그, 메모 부정 표현, 이용 단가, 전체 초기화
 mobile/                   # Expo 앱에 복사할 Android 자동 측정 모듈과 호출 코드 (mobile/README.md)
 requirements.txt
 .env.example
@@ -180,6 +182,7 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
 | GET | /api/notifications | 알림 후보 목록 200 |
 | GET | /api/settings | 전체 설정 200 |
 | PATCH | /api/settings | 전체 설정 수정 200 |
+| POST | /api/settings/reset-data | 전체 초기화 204 (`{"confirm": true}` 필수) |
 
 | Figma 화면 | 사용하는 API |
 | --- | --- |
@@ -214,7 +217,7 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
   "started_on": "2023-03-15",
   "status": "active",
   "notification_enabled": true,
-  "renewal_reminder_days": 7,
+  "renewal_reminder_days": 3,
   "include_in_analysis": true,
   "track_usage": true,
   "android_package": "com.netflix.mediaclient"
@@ -222,7 +225,7 @@ Calendar/Analytics/EmptyState/Notification 테이블은 없습니다.
 ```
 
 필수 입력은 name, price_won, billing_day입니다.
-기본값은 monthly/active, notification_enabled=true, renewal_reminder_days=7, include_in_analysis=true입니다.
+기본값은 monthly/active, notification_enabled=true, renewal_reminder_days=3, include_in_analysis=true입니다.
 category, billing_month, plan_name, memo, started_on, android_package는 생략하면 null입니다.
 plan_name·memo는 앞뒤 공백을 지우며 최대 500자입니다. started_on은 실제 구독 시작일이며 미래 날짜는 거부합니다.
 화면의 "등록일"은 started_on이 있으면 그 값, 없으면 created_at을 보여주면 됩니다.
@@ -242,7 +245,8 @@ track_usage(기본 true)는 이용 기록 대상 여부입니다. 보험료·통
 응답은 입력 필드 전체 + id, deleted_at, created_at, updated_at, next_renewal_date, d_day입니다.
 created_at/updated_at 예: `2026-09-30T10:30:00.123456Z`.
 next_renewal_date/d_day는 활성 구독만 계산하고 해지·일시정지·삭제면 null입니다.
-latest_decision은 가장 최근 결정(keep/cancel/postpone, 없으면 null)입니다. 홈 구독 항목에도 들어 있습니다.
+latest_decision은 가장 최근 결정(keep/cancel/hold, 없으면 null)입니다. 홈 구독 항목에도 들어 있습니다.
+cancel_window_start/cancel_window_end는 해지 권장 기간(다음 결제일 5일 전 ~ 하루 전)이며 활성 구독만 계산합니다.
 
 한국 날짜(UTC+09:00)를 기준으로 계산합니다. 31일이 없는 월은 마지막 날로 보정하고 원래 billing_day는 바꾸지 않습니다.
 월간 31일은 2026년 2월 28일, 2028년 2월 29일에 해당합니다.
@@ -264,7 +268,7 @@ latest_decision은 가장 최근 결정(keep/cancel/postpone, 없으면 null)입
       "id": 1, "name": "Netflix", "price_won": 17000,
       "billing_cycle": "monthly", "billing_day": 31, "billing_month": null,
       "category": "OTT", "status": "active",
-      "notification_enabled": true, "renewal_reminder_days": 7, "include_in_analysis": true,
+      "notification_enabled": true, "renewal_reminder_days": 3, "include_in_analysis": true,
       "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z",
       "next_renewal_date": "2026-09-30", "d_day": 0
     }
@@ -442,7 +446,8 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
   "items": [
     {"subscription_id": 1, "name": "넷플릭스", "category": "OTT", "price_won": 17000,
      "billing_cycle": "monthly", "reasons": ["low_usage", "duplicate_category"],
-     "usage_count_90d": 1, "duplicate_with": [2], "monthly_saving_won": 17000, "yearly_saving_won": 204000}
+     "usage_count_90d": 1, "duplicate_with": [2], "cost_per_use_won": 51000,
+     "monthly_saving_won": 17000, "yearly_saving_won": 204000}
   ]
 }
 ```
@@ -452,8 +457,10 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
 - low_usage: 관찰 30일 이상이고 최근 90일 이용 2회 이하(앱 코어 엔진과 같은 기준). 등록한 지 30일이 안 된 구독은 추천하지 않습니다.
 - duplicate_category: 같은 카테고리(앞뒤 공백·대소문자 무시)의 활성 구독이 2개 이상이면
   최근 90일 이용이 가장 많은 1개(같으면 더 싼 것)를 남기고 나머지를 추천합니다. 카테고리 null과 etc/기타는 제외.
-- track_usage=false 구독은 추천하지 않습니다.
-- 최근 30일 안에 keep 또는 postpone 결정을 기록한 구독은 추천하지 않습니다.
+- negative_memo: 미사용 구독의 이용 기록 메모에 "안 봄", "재미없", "안 씀", "해지" 등이 있으면 덧붙는 이유.
+- cost_per_use_won: 월 요금 ÷ (90일 이용 횟수 / 3). 이용 0회면 null. 앱 코어 엔진과 같은 계산입니다.
+- track_usage=false 구독과 '해지' 태그(최근 결정이 cancel)를 붙인 구독은 추천하지 않습니다.
+- 최근 30일 안에 keep 또는 hold 결정을 기록한 구독은 추천하지 않습니다.
 - 절약 금액: 월간은 요금, 연간은 요금/12(반올림)를 한 달 기준으로, 연간 절약은 월간×12 또는 연간 요금.
   응답 상단의 합계가 "이번 달 총 절약 가능 금액 / 연간 최대"입니다.
 - 설정 recommendation_enabled=false면 enabled=false와 빈 목록을 줍니다.
@@ -465,15 +472,23 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
 POST /api/subscriptions/1/decisions:
 
 ```json
-{"decision":"postpone","memo":"다음 달에 다시 확인"}
+{"decision":"hold","memo":"다음 달에 다시 확인"}
 ```
 
-keep/cancel/postpone만 허용합니다. decided_at은 서버 UTC 현재 시각입니다.
+keep/cancel/hold만 허용합니다(앱의 유지/해지/보류 태그). 이전 DB의 postpone은 마이그레이션 때 hold로 바꿉니다. decided_at은 서버 UTC 현재 시각입니다.
 응답은 id, subscription_id, decision, decided_at, memo.
 조회는 decided_at/id 내림차순입니다.
 결정 이력은 Subscription.status를 자동 변경하지 않습니다.
-cancel 결정만으로 실제 해지되지 않으며 postpone가 paused를 뜻하지도 않습니다.
+cancel 결정만으로 실제 해지되지 않으며 hold가 paused를 뜻하지도 않습니다.
+다만 최근 결정이 cancel('해지' 태그)인 구독은 앱과 같이 캘린더 예정·알림·해지 추천·이용 확인에서 뺍니다.
+다시 keep이나 hold를 기록하면 돌아옵니다.
 상태 변경을 원하면 별도로 PATCH /subscriptions/{id}를 호출합니다.
+
+## 전체 초기화
+
+`POST /api/settings/reset-data`에 `{"confirm": true}`를 보내면 구독·이용 기록·결제·결정을 모두 지웁니다.
+설정값은 유지합니다. 되돌릴 수 없으며 confirm이 없거나 false면 422입니다. 앱의 온보딩 완료 여부는 폰에 저장되므로
+앱에서 따로 초기화합니다.
 
 ## 전체 설정과 알림 범위
 
@@ -491,10 +506,12 @@ GET /api/notifications는 현재 조회 시점의 알림 후보 배열입니다.
 
 - 전체 notifications_enabled=false이면 [].
 - active + 서비스별 notification_enabled=true인 구독만 대상.
-- renewal: 오늘부터 다음 갱신일까지 0~renewal_reminder_days일이면 후보(당일 포함).
+- renewal: 오늘부터 다음 갱신일까지 0~renewal_reminder_days일(기본 3일)이면 후보(당일 포함).
+- cancel_window: renewal이 아니면서 다음 결제일이 1~5일 남았으면 해지 권장 기간 후보.
 - no_usage: 마지막 used_date로부터 7일 이상 경과하면 후보.
 - 이용 기록이 전혀 없으면 구독 등록일로부터 7일 경과 후 후보.
 - recommendation: 해지 추천 대상이면 후보(reasons에 이유). recommendation_enabled=false면 제외.
+- '해지' 태그를 붙인 구독은 어떤 알림도 만들지 않습니다.
 - 하나의 구독이 여러 종류 후보를 동시에 가질 수 있음.
 - 서버는 Push/예약 작업/읽음 처리/발송 이력/중복 발송 방지를 구현하지 않음.
 
@@ -593,7 +610,7 @@ DB 삭제 후 재생성은 기본 절차가 아닙니다. 데이터가 불필요
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-47개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
+53개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
 기존 12개 테스트 범위를 유지하고 checked_at → used_date, 추가 응답 필드, DELETE CORS 허용 변경에 맞춰 검증을 수정했습니다.
 새 검증은 월말/윤년/연간 갱신, D-day와 정렬, 동일 날짜 예정+실제, 설정/알림 경계,
 manual/mobile_auto/notification, 과거일/수정/삭제/필터, 7/30/90일과 30/60일 관찰 경계,
