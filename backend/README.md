@@ -446,7 +446,7 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
   "items": [
     {"subscription_id": 1, "name": "넷플릭스", "category": "OTT", "price_won": 17000,
      "billing_cycle": "monthly", "reasons": ["low_usage", "duplicate_category"],
-     "usage_count_90d": 1, "duplicate_with": [2], "cost_per_use_won": 51000,
+     "usage_count_90d": 1, "duplicate_with": [2, 3], "cost_per_use_won": 51000,
      "monthly_saving_won": 17000, "yearly_saving_won": 204000}
   ]
 }
@@ -455,8 +455,8 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
 활성 구독만 대상이며 저장하지 않고 조회할 때마다 계산합니다.
 
 - low_usage: 관찰 30일 이상이고 최근 90일 이용 2회 이하(앱 코어 엔진과 같은 기준). 등록한 지 30일이 안 된 구독은 추천하지 않습니다.
-- duplicate_category: 같은 카테고리(앞뒤 공백·대소문자 무시)의 활성 구독이 2개 이상이면
-  최근 90일 이용이 가장 많은 1개(같으면 더 싼 것)를 남기고 나머지를 추천합니다. 카테고리 null과 etc/기타는 제외.
+- duplicate_category: 같은 카테고리(앞뒤 공백·대소문자 무시)의 활성 구독이 3개 이상이면
+  최근 90일 이용이 가장 적은 1개(같으면 더 비싼 것)만 추천합니다. 2개뿐이면 중복으로 보지 않습니다. 카테고리 null과 etc/기타는 제외.
 - negative_memo: 미사용 구독의 이용 기록 메모에 "안 봄", "재미없", "안 씀", "해지" 등이 있으면 덧붙는 이유.
 - cost_per_use_won: 월 요금 ÷ (90일 이용 횟수 / 3). 이용 0회면 null. 앱 코어 엔진과 같은 계산입니다.
 - track_usage=false 구독과 '해지' 태그(최근 결정이 cancel)를 붙인 구독은 추천하지 않습니다.
@@ -610,7 +610,7 @@ DB 삭제 후 재생성은 기본 절차가 아닙니다. 데이터가 불필요
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-54개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
+56개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
 기존 12개 테스트 범위를 유지하고 checked_at → used_date, 추가 응답 필드, DELETE CORS 허용 변경에 맞춰 검증을 수정했습니다.
 새 검증은 월말/윤년/연간 갱신, D-day와 정렬, 동일 날짜 예정+실제, 설정/알림 경계,
 manual/mobile_auto/notification, 과거일/수정/삭제/필터, 7/30/90일과 30/60일 관찰 경계,

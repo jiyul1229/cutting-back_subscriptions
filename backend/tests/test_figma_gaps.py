@@ -95,7 +95,7 @@ class FigmaGapApiTests(LiveApiTestCase):
         youtube = self.create_subscription(name="유튜브", price_won=14900, category="영상")["id"]
         for sid in (netflix, tving, ridi, youtube):
             self.age(sid, 40)
-        for days_ago in range(5):  # 티빙을 넷플릭스보다 많이 씀 → 넷플릭스가 중복 추천
+        for days_ago in range(5):  # OTT는 2개뿐이라 중복 추천 대상 아님(3개 이상부터)
             self.request("POST", f"/api/subscriptions/{tving}/usage-logs",
                          {"used_date": (today() - timedelta(days=days_ago)).isoformat()}, 201)
         for days_ago in range(3):
@@ -104,8 +104,8 @@ class FigmaGapApiTests(LiveApiTestCase):
         result = self.request("GET", "/api/analytics/recommendations")
         items = {item["subscription_id"]: item for item in result["items"]}
         self.assertEqual(set(items), {netflix, ridi})
-        self.assertEqual(items[netflix]["reasons"], ["low_usage", "duplicate_category"])
-        self.assertEqual(items[netflix]["duplicate_with"], [tving])
+        self.assertEqual(items[netflix]["reasons"], ["low_usage"])
+        self.assertEqual(items[netflix]["duplicate_with"], [])
         self.assertEqual(items[ridi]["reasons"], ["low_usage"])
         self.assertEqual((items[ridi]["monthly_saving_won"], items[ridi]["yearly_saving_won"]), (9900, 118800))
         self.assertEqual((result["monthly_saving_won"], result["yearly_saving_won"]), (26900, 322800))

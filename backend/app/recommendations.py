@@ -2,8 +2,8 @@
 
 추천 이유
 - low_usage: 관찰 30일 이상인데 최근 90일 이용이 2회 이하 (LOW_USAGE_* 상수)
-- duplicate_category: 같은 카테고리의 활성 구독이 2개 이상일 때, 가장 많이 쓰는 1개를 빼고 나머지
-  (이용 횟수가 같으면 더 싼 것을 남깁니다). '기타'(etc)는 서로 다른 서비스 묶음이라 제외합니다.
+- duplicate_category: 같은 카테고리의 활성 구독이 3개 이상일 때, 최근 90일 이용이 가장 적은 1개
+  (같으면 더 비싼 것). '기타'(etc)는 서로 다른 서비스 묶음이라 제외합니다.
 
 이용 기록 대상이 아닌 구독(track_usage=false, 보험료·통신비 등)과 이미 '해지' 태그를 붙인 구독은
 추천하지 않습니다. 미사용 구독의 이용 기록 메모에 부정 표현("안 봄" 등)이 있으면 negative_memo를 덧붙입니다.
@@ -29,6 +29,8 @@ from app.schemas import RecommendationItem
 
 # 서로 다른 서비스를 모아둔 분류라 중복으로 보지 않습니다.
 NON_GROUP_CATEGORIES = {"etc", "기타"}
+# 같은 카테고리 구독이 이 개수 이상일 때만 중복으로 봅니다.
+DUPLICATE_MIN_GROUP_SIZE = 3
 
 
 def monthly_saving(subscription: Subscription) -> int:
@@ -105,13 +107,12 @@ def build_recommendations(db: Session, current: date | None = None) -> list[Reco
             groups[key].append(subscription)
     duplicate_with: dict[int, list[int]] = {}
     for members in groups.values():
-        if len(members) < 2:
+        if len(members) < DUPLICATE_MIN_GROUP_SIZE:
             continue
-        keep = min(members, key=lambda s: (-recent_count[s.id], s.price_won, s.id))
-        for member in members:
-            duplicate_with[member.id] = [other.id for other in members if other.id != member.id]
-            if member.id != keep.id:
-                reasons[member.id].append("duplicate_category")
+        # 가장 적게 쓰는 1개만 추천. 이용 횟수가 같으면 더 비싼 것(절약이 큰 것), 그다음 나중에 등록한 것.
+        least = min(members, key=lambda s: (recent_count[s.id], -s.price_won, -s.id))
+        duplicate_with[least.id] = [other.id for other in members if other.id != least.id]
+        reasons[least.id].append("duplicate_category")
 
     items = [
         RecommendationItem(

@@ -84,20 +84,34 @@ class FrontendParityTests(LiveApiTestCase):
                       if i["subscription_id"] == quiet][0]
         self.assertEqual((quiet_item["reasons"], quiet_item["cost_per_use_won"]), (["low_usage"], None))
 
-    def test_three_in_same_category_recommends_least_used(self):
-        def sub_with_uses(name, price, uses):
-            sid = self.create_subscription(name=name, category="ott", price_won=price)["id"]
-            for _ in range(uses):
-                self.request("POST", f"/api/subscriptions/{sid}/usage-logs", {}, 201)
-            return sid
-        most = sub_with_uses("most", 17000, 9)
-        middle = sub_with_uses("middle", 13900, 5)
-        least = sub_with_uses("least", 9900, 3)  # 3회라 미사용(2회 이하)은 아님 → 중복 이유만
-        items = {i["subscription_id"]: i for i in self.request("GET", "/api/analytics/recommendations")["items"]}
-        self.assertNotIn(most, items)  # 가장 많이 쓰는 1개만 남김
+    def sub_with_uses(self, name, category, price, uses):
+        sid = self.create_subscription(name=name, category=category, price_won=price)["id"]
+        for _ in range(uses):  # 3회 이상이면 미사용(2회 이하)이 아니어서 중복 이유만 확인됩니다
+            self.request("POST", f"/api/subscriptions/{sid}/usage-logs", {}, 201)
+        return sid
+
+    def recommended(self):
+        return {i["subscription_id"]: i for i in self.request("GET", "/api/analytics/recommendations")["items"]}
+
+    def test_three_in_same_category_recommends_only_least_used(self):
+        most = self.sub_with_uses("most", "ott", 17000, 9)
+        middle = self.sub_with_uses("middle", "ott", 13900, 5)
+        least = self.sub_with_uses("least", "ott", 9900, 3)
+        items = self.recommended()
+        self.assertEqual(set(items), {least})
         self.assertEqual(items[least]["reasons"], ["duplicate_category"])
-        self.assertEqual(items[middle]["reasons"], ["duplicate_category"])
         self.assertEqual(sorted(items[least]["duplicate_with"]), sorted([most, middle]))
+
+    def test_two_in_same_category_is_not_duplicate(self):
+        self.sub_with_uses("a", "ott", 17000, 9)
+        self.sub_with_uses("b", "ott", 9900, 3)
+        self.assertEqual(self.recommended(), {})
+
+    def test_tie_recommends_more_expensive(self):
+        self.sub_with_uses("a", "ott", 17000, 9)
+        self.sub_with_uses("cheap", "ott", 9900, 3)
+        pricey = self.sub_with_uses("pricey", "ott", 13900, 3)
+        self.assertEqual(set(self.recommended()), {pricey})
 
     def test_reset_data(self):
         sid = self.create_subscription()["id"]
