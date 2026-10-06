@@ -25,13 +25,32 @@ from app.routers.usage_logs import get_usage_summary
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# 서버를 끈 뒤 Windows가 파일 잠금을 늦게 풀 때 임시 폴더 삭제를 다시 시도하는 최대 시간(초)
+FILE_RELEASE_TIMEOUT = 5
+
+
+def remove_temp_dir(temp: tempfile.TemporaryDirectory) -> None:
+    """서버를 끈 뒤 임시 폴더를 지웁니다.
+
+    Windows는 프로세스가 끝난 직후에도 잠깐 파일을 잠가 둘 수 있어 '사용 중'(PermissionError)일 때만
+    잠시 다시 시도합니다. 시간 안에 못 지우거나 다른 오류면 그대로 실패로 보고합니다.
+    """
+    deadline = time.monotonic() + FILE_RELEASE_TIMEOUT
+    while True:
+        try:
+            temp.cleanup()
+            return
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
 
 
 class LiveApiTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="subscription-api-")
-        cls.addClassCleanup(cls.temp.cleanup)
+        cls.addClassCleanup(remove_temp_dir, cls.temp)
         cls.db_path = Path(cls.temp.name) / "test.db"
         cls.server_log = open(Path(cls.temp.name) / "server.log", "w+", encoding="utf-8")
         cls.addClassCleanup(cls.server_log.close)
@@ -66,7 +85,11 @@ class LiveApiTestCase(unittest.TestCase):
     @classmethod
     def stop_server(cls):
         if cls.process.poll() is None:
-            cls.process.terminate()
+            if os.name == "nt":
+                # Windows 가상환경의 python.exe는 실제 서버를 자식 프로세스로 띄우므로 자식까지 함께 끕니다.
+                subprocess.run(["taskkill", "/PID", str(cls.process.pid), "/T", "/F"], capture_output=True)
+            else:
+                cls.process.terminate()
             try:
                 cls.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
