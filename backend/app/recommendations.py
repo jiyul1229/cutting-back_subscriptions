@@ -3,6 +3,8 @@
 추천 이유 (규칙이 정하고, 메모 분석은 근거를 보탬 — 문서 R3)
 - low_usage: 최근 N일 이용이 M회 이하 (설정값, 기본 90일 2회).
   관찰 기간이 min(30일, N일)보다 짧으면 판단하지 않고 '데이터 수집 중'(collecting)으로 돌려줍니다.
+  관찰 기간이 N일보다 짧으면 기간 비율로 환산합니다(팀 문서 성공 기준 6). 예: 90일 2회 기준에서
+  45일 관찰이면 1회 이하일 때만 추천합니다. 응답의 window_days는 실제로 본 기간(관찰 기간과 N일 중 짧은 쪽)입니다.
 - duplicate_category: 같은 카테고리의 활성 구독이 3개 이상일 때, 최근 N일 이용이 가장 적은 1개
   (같으면 더 비싼 것). '기타'(etc)는 서로 다른 서비스 묶음이라 제외합니다.
 - negative_memo: 미사용 구독의 이용 기록 메모가 '안 쓴다'는 신호일 때 (memo_analysis: AI 또는 키워드)
@@ -10,11 +12,12 @@
 제외: 이용 기록 대상이 아닌 구독(track_usage=false, 보험료·통신비 등), '해지' 태그를 붙인 구독,
 최근 RECOMMENDATION_SNOOZE_DAYS일 안에 유지(keep)나 보류(hold)를 결정한 구독.
 
-"아직 쓰고 있어요"(F6 민감도 조정): 그 구독만의 기준을 낮추거나(지금 이용 횟수 - 1회 이하일 때만 추천),
+"아직 쓰고 있어요"(F6 민감도 조정): 그 구독만의 기준을 낮추거나(지금 이용 빈도보다 줄었을 때만 추천),
 이용 0회였다면 판단 기간 동안 미사용 추천을 멈추고, 중복 추천에서는 제외합니다.
 절약 금액은 월 환산(연간 /12, 매주 ×52/12)과 연 환산 금액입니다.
 """
 from collections import defaultdict
+from math import ceil
 from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import case, func, select
@@ -50,6 +53,11 @@ def cost_per_use(subscription: Subscription, uses: int, window_days: int) -> int
     if uses == 0:
         return None
     return round(monthly_saving(subscription) / (uses * 30 / window_days))
+
+
+def is_low_usage(count: int, limit: int, seen_days: int, window_days: int) -> bool:
+    """seen_days 동안 count회 이용이 'window_days일에 limit회 이하'와 같은 빈도 이하인지."""
+    return count * window_days <= limit * seen_days
 
 
 def criteria(db: Session) -> tuple[int, int]:
@@ -109,6 +117,7 @@ def evaluate(db: Session, current: date | None = None) -> tuple[list[Recommendat
 
     reasons: dict[int, list[str]] = defaultdict(list)
     recent_count = {}
+    seen_days = {}
     collecting = []
     for subscription in subscriptions:
         count, earliest = usage.get(subscription.id, (0, None))
@@ -117,6 +126,7 @@ def evaluate(db: Session, current: date | None = None) -> tuple[list[Recommendat
         if earliest is not None and earliest < start:
             start = earliest
         observation = (current - start).days + 1
+        seen_days[subscription.id] = min(observation, window_days)
         if observation < min_observation:
             collecting.append(CollectingItem(
                 subscription_id=subscription.id, name=subscription.name,
@@ -127,7 +137,7 @@ def evaluate(db: Session, current: date | None = None) -> tuple[list[Recommendat
         if snooze_until is not None and current <= snooze_until:
             continue
         limit = subscription.low_usage_max_count_override
-        if count <= (max_count if limit is None else limit):
+        if is_low_usage(count, max_count if limit is None else limit, seen_days[subscription.id], window_days):
             reasons[subscription.id].append("low_usage")
             if subscription.id in negative:
                 reasons[subscription.id].append("negative_memo")
@@ -152,9 +162,9 @@ def evaluate(db: Session, current: date | None = None) -> tuple[list[Recommendat
             subscription_id=subscription.id, name=subscription.name, category=subscription.category,
             price_won=subscription.price_won, billing_cycle=subscription.billing_cycle,
             reasons=reasons[subscription.id], recent_usage_count=recent_count[subscription.id],
-            window_days=window_days,
+            window_days=seen_days[subscription.id],
             duplicate_with=duplicate_with.get(subscription.id, []),
-            cost_per_use_won=cost_per_use(subscription, recent_count[subscription.id], window_days),
+            cost_per_use_won=cost_per_use(subscription, recent_count[subscription.id], seen_days[subscription.id]),
             monthly_saving_won=monthly_saving(subscription),
             yearly_saving_won=yearly_saving(subscription),
             personalized=is_personalized(subscription, current),
@@ -204,15 +214,18 @@ def apply_still_using(db: Session, subscription: Subscription, current: date | N
     item = next((i for i in build_recommendations(db, current) if i.subscription_id == subscription.id), None)
     if item is None:
         raise LookupError("Subscription is not currently recommended")
+    window_days, _ = criteria(db)
     applied = []
     if "low_usage" in item.reasons:
         if item.recent_usage_count >= 1:
-            # 지금만큼 쓰는 건 괜찮다는 뜻 → 이보다 더 줄었을 때만 추천
-            subscription.low_usage_max_count_override = item.recent_usage_count - 1
+            # 지금만큼 쓰는 건 괜찮다는 뜻 → 이보다 더 줄었을 때만 추천.
+            # 기준은 판단 기간(N일) 단위로 저장합니다. 관찰 기간이 N일이면 '지금 횟수 - 1'과 같습니다.
+            per_window = item.recent_usage_count * window_days / item.window_days
+            subscription.low_usage_max_count_override = ceil(per_window) - 1
             applied.append("threshold")
         else:
             # 0회인데 쓰고 있다면 기록이 빠진 것(TV 시청 등) → 판단 기간 동안 미사용 추천을 멈춤
-            subscription.low_usage_snooze_until = current + timedelta(days=item.window_days)
+            subscription.low_usage_snooze_until = current + timedelta(days=window_days)
             applied.append("snooze")
     if "duplicate_category" in item.reasons:
         subscription.duplicate_exempt = True

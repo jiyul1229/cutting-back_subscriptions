@@ -138,7 +138,7 @@ tests/
   test_usage_tracking.py  # 이용 시간 자동·수기 기록, 이용 확인, 자동 결제 검증
   test_figma_gaps.py      # 구독 필드, 삭제, 전월 대비, 월별 추이, 해지 추천 검증
   test_frontend_parity.py # 앱 기준 맞춤: 해지 권장 기간, 해지 태그, 메모 부정 표현, 이용 단가, 전체 초기화
-  test_doc_alignment.py   # 팀 문서 기준: 캘린더 해지 기한, 매주 결제, 알림 예약, 프리셋, 지표, 민감도 조정, AI 메모
+  test_doc_alignment.py   # 팀 문서 기준: 캘린더 해지 기한, 매주 결제, 알림 예약, 프리셋, 지표, 민감도 조정, 관찰 기간 환산, AI 메모
 mobile/                   # Expo 앱에 복사할 Android 자동 측정 모듈과 호출 코드 (mobile/README.md)
 requirements.txt
 .env.example
@@ -497,11 +497,13 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
 - low_usage: 최근 N일 이용이 M회 이하. 기본은 90일 2회(앱 코어 엔진과 같은 기준)이며
   설정의 low_usage_window_days(7~365), low_usage_max_count(0~100)로 사용자가 바꿉니다.
   관찰 기간이 min(30일, N일)보다 짧은 구독은 아직 판단하지 않습니다.
+  관찰 기간이 N일보다 짧으면 기간 비율로 환산합니다(성공 기준 6과 90일 기준의 충돌 해소).
+  예: 90일 2회 기준에서 45일 관찰이면 1회 이하일 때만 추천합니다. 판단식은 `이용 횟수 × N ≤ M × 관찰 일수`.
 - duplicate_category: 같은 카테고리(앞뒤 공백·대소문자 무시)의 활성 구독이 3개 이상이면
   최근 N일 이용이 가장 적은 1개(같으면 더 비싼 것)만 추천합니다. 2개뿐이면 중복으로 보지 않습니다. 카테고리 null과 etc/기타는 제외.
 - negative_memo: 미사용 구독의 이용 기록 메모가 '안 쓴다'는 신호이면 덧붙는 이유. 메모 분석 결과(AI 또는 키워드)를 씁니다.
-- recent_usage_count / window_days: 판단 기간(N일)과 그 기간의 이용 횟수.
-- cost_per_use_won: 월 요금 ÷ 한 달 평균 이용 횟수(이용 횟수 × 30 / N). 이용 0회면 null.
+- recent_usage_count / window_days: 실제로 본 기간(관찰 기간과 N일 중 짧은 쪽)과 그 기간의 이용 횟수.
+- cost_per_use_won: 월 요금 ÷ 한 달 평균 이용 횟수(이용 횟수 × 30 / window_days). 이용 0회면 null.
   N=90이면 앱 코어 엔진의 '월 요금 ÷ (90일 이용 / 3)'과 같습니다.
 - track_usage=false 구독과 '해지' 태그(최근 결정이 cancel)를 붙인 구독은 추천하지 않습니다.
 - 최근 30일 안에 keep 또는 hold 결정을 기록한 구독은 추천하지 않습니다.
@@ -515,7 +517,8 @@ status=canceled/paused라도 분석 포함 토글이 켜져 있으면 과거 실
 
 `POST /api/subscriptions/{id}/recommendation-feedback` `{"response":"still_using"}`. 지금 추천 대상이 아니면 409.
 
-- 미사용으로 추천됐고 이용이 1회 이상: 이 구독만 기준을 "지금 횟수 - 1회 이하"로 낮춥니다(applied: threshold).
+- 미사용으로 추천됐고 이용이 1회 이상: 이 구독만 기준을 "지금 빈도보다 줄었을 때"로 낮춥니다(applied: threshold).
+  기준은 N일 단위로 저장합니다(N일을 다 봤으면 지금 횟수 - 1, 45일 1회였다면 90일 1회).
 - 이용 0회(TV 시청 등 기록 누락): 판단 기간 동안 이 구독의 미사용 추천을 멈춥니다(applied: snooze).
 - 중복으로 추천됨: 이 구독을 중복 추천에서 제외하고, 같은 카테고리에서 다음으로 적게 쓰는 구독을 봅니다(applied: duplicate_exempt).
 - 응답 전 경고는 still_using으로 기록됩니다. 개인화된 추천 항목은 personalized=true입니다.
@@ -712,7 +715,7 @@ DB 삭제 후 재생성은 기본 절차가 아닙니다. 데이터가 불필요
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-82개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
+84개 테스트. 별도 Uvicorn 프로세스와 임시 SQLite로 HTTP 요청을 보내며 원래 프로젝트 DB에는 쓰지 않습니다.
 기존 12개 테스트 범위를 유지하고 checked_at → used_date, 추가 응답 필드, DELETE CORS 허용 변경에 맞춰 검증을 수정했습니다.
 새 검증은 월말/윤년/연간 갱신, D-day와 정렬, 동일 날짜 예정+실제, 설정/알림 경계,
 manual/mobile_auto/notification, 과거일/수정/삭제/필터, 7/30/90일과 30/60일 관찰 경계,

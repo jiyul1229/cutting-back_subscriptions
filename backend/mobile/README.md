@@ -57,7 +57,12 @@ Expo Go 대신 우리 앱 전용 Expo Go를 직접 만드는 것입니다. 비�
 5. 앱 시작 시, 구독을 추가·수정한 뒤, 설정을 바꾼 뒤 `scheduleReminders()` 호출
    → 서버의 `/api/notifications/schedule`을 받아 결제 알림(3일 전), 해지 기한 알림(5일 전),
    "이번 주에 썼나요?"(7일 기록 없음)를 폰에 예약합니다. 여러 번 불러도 중복되지 않습니다.
-   expo-notifications의 날짜 예약은 앱이 꺼져 있어도 울립니다. 폰을 재부팅한 뒤에는 앱을 한 번 열면 다시 예약됩니다.
+   expo-notifications의 날짜 예약은 앱이 꺼져 있어도 울립니다. Android에서는 라이브러리가 부팅 완료
+   신호(BOOT_COMPLETED)를 받아 저장해 둔 예약을 자동으로 다시 겁니다(앱을 열 필요 없음).
+   실제 기기에서 재부팅 후 울리는지는 아직 확인하지 않았습니다.
+   동시에 여러 번 불러도 순서대로 한 번씩 실행되고, 마지막 호출이 최신 서버 상태로 예약을 맞춥니다.
+   앱이 열려 있을 때도 알림이 뜨도록 usageTracking.ts가 setNotificationHandler를 설정합니다.
+   Android Expo Go(SDK 53+)에서는 expo-notifications를 불러오는 순간 오류가 나므로 개발용 빌드에서만 씁니다.
 6. 해지 추천 카드의 "아직 쓰고 있어요" 버튼 → `markStillUsing(id)`
 
 자동 측정 날짜는 서버와 같은 한국 시간 기준입니다.

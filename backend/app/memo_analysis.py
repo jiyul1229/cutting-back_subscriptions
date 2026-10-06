@@ -103,3 +103,16 @@ def analyze_with_claude(memo: str) -> bool | None:
     except (TypeError, ValueError, KeyError):
         logger.warning("Memo analysis returned unexpected output; using keywords")
         return None
+
+
+if __name__ == "__main__":
+    # 실제 Claude 호출 확인: MEMO_ANALYSIS=ai와 ANTHROPIC_API_KEY를 설정하고
+    #   python -m app.memo_analysis "요즘 손이 안 가" "가족이랑 재밌게 봄"
+    import sys
+
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+    sys.stdout.reconfigure(encoding="utf-8")
+    print(f"MEMO_ANALYSIS={'ai' if ai_enabled() else 'keyword'}")
+    for text in sys.argv[1:] or ["요즘 손이 안 가", "가족이랑 재밌게 봄", "이번 달은 거의 못 봤네"]:
+        negative, method = analyze_memo(text)
+        print(f"{text!r} -> negative={negative}, analyzed_by={method}")

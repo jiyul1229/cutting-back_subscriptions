@@ -73,7 +73,7 @@ class FrontendParityTests(LiveApiTestCase):
 
     def test_negative_memo_and_cost_per_use(self):
         sid = self.create_subscription(price_won=12000, category="ott")["id"]
-        self.age(sid, 40)
+        self.age(sid, 90)
         self.request("POST", f"/api/subscriptions/{sid}/usage-logs", {"memo": "요즘 재미없어서 안 봄"}, 201)
         item = self.request("GET", "/api/analytics/recommendations")["items"][0]
         self.assertEqual(item["reasons"], ["low_usage", "negative_memo"])

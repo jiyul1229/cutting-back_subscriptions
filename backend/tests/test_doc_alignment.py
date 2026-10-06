@@ -178,7 +178,7 @@ class DocAlignmentApiTests(LiveApiTestCase):
     # ---------- "아직 쓰고 있어요" ----------
     def test_still_using_lowers_threshold_for_that_subscription(self):
         sid = self.create_subscription(category="book")["id"]
-        self.age(sid, 40)
+        self.age(sid, 90)
         self.use(sid, 3)
         self.assertEqual(self.recommended()[sid]["recent_usage_count"], 1)
         feedback = self.request("POST", f"/api/subscriptions/{sid}/recommendation-feedback",
@@ -193,6 +193,33 @@ class DocAlignmentApiTests(LiveApiTestCase):
         self.request("DELETE", f"/api/subscriptions/{sid}/recommendation-feedback", expected=204)
         detail = self.request("GET", f"/api/subscriptions/{sid}")
         self.assertIsNone(detail["low_usage_max_count_override"])
+
+    def test_short_observation_is_scaled_to_window(self):
+        # 기준 90일 2회. 45일만 봤으면 1회 이하일 때만 추천합니다(성공 기준 6: 첫 달 판단과 90일 기준의 충돌 해소).
+        once = self.create_subscription(name="1회", category="book")["id"]
+        twice = self.create_subscription(name="2회", category="music")["id"]
+        for sid in (once, twice):
+            self.age(sid, 45)
+        self.use(once, 1)
+        self.use(twice, 1)
+        self.use(twice, 2)
+        items = self.recommended()
+        self.assertNotIn(twice, items)  # 90일로 치면 4회
+        self.assertEqual((items[once]["recent_usage_count"], items[once]["window_days"]), (1, 45))
+        self.assertEqual(items[once]["cost_per_use_won"], 17000 * 45 // 30)  # 월 요금 ÷ 한 달 평균(1 × 30/45)
+        # 90일이 지나면 그대로 90일 2회 기준
+        self.age(twice, 120)
+        self.assertEqual(self.recommended()[twice]["window_days"], 90)
+
+    def test_still_using_after_short_observation_keeps_current_rate(self):
+        sid = self.create_subscription(category="book")["id"]
+        self.age(sid, 45)
+        self.use(sid, 1)
+        feedback = self.request("POST", f"/api/subscriptions/{sid}/recommendation-feedback",
+                                {"response": "still_using"})
+        # 45일 1회 = 90일 2회 빈도. 이보다 줄어야(90일 1회 이하) 다시 추천
+        self.assertEqual((feedback["applied"], feedback["low_usage_max_count_override"]), (["threshold"], 1))
+        self.assertNotIn(sid, self.recommended())
 
     def test_still_using_with_zero_uses_snoozes(self):
         sid = self.create_subscription(category="book")["id"]

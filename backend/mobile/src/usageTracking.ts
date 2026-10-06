@@ -186,13 +186,34 @@ function reminderContent(item: ReminderItem): { title: string; body: string } {
   }
 }
 
+// 앱이 열려 있을 때도 알림을 화면에 띄웁니다(없으면 포그라운드에서는 조용히 사라짐).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+// 예약 작업을 한 번에 하나씩 실행합니다. 동시에 돌면 먼저 받은 옛 목록이 나중에 들어가
+// 꺼 둔 알림이 남을 수 있습니다. 순서대로 돌면 마지막 호출이 최신 서버 상태로 마무리합니다.
+let reminderQueue: Promise<unknown> = Promise.resolve();
+
 /**
  * 앞으로 days일 동안의 결제 알림, 해지 기한 알림, "이번 주에 썼나요?" 알림을 폰에 예약합니다.
  * 앱을 열 때, 구독을 추가·수정한 뒤, 설정을 바꾼 뒤 호출하세요. 매번 기존 예약을 지우고 새로 넣으므로
- * 여러 번 호출해도 중복되지 않습니다. 서버는 이미 지난 시각을 주지 않습니다.
+ * 여러 번(동시에) 호출해도 중복되지 않습니다. 서버는 이미 지난 시각을 주지 않습니다.
+ * kood-로 시작하는 예약만 지우므로 다른 알림(이용 확인 등)은 그대로입니다.
  * 반환값: 예약한 알림 개수 (알림 권한이 없으면 0)
  */
-export async function scheduleReminders(days = 30): Promise<number> {
+export function scheduleReminders(days = 30): Promise<number> {
+  const run = reminderQueue.then(() => rescheduleReminders(days));
+  reminderQueue = run.catch(() => undefined); // 한 번 실패해도 다음 호출은 실행
+  return run;
+}
+
+async function rescheduleReminders(days: number): Promise<number> {
   const permission = await Notifications.requestPermissionsAsync();
   if (!permission.granted) return 0;
   await Notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
@@ -207,16 +228,25 @@ export async function scheduleReminders(days = 30): Promise<number> {
       .filter((n) => n.identifier.startsWith(REMINDER_PREFIX))
       .map((n) => Notifications.cancelScheduledNotificationAsync(n.identifier)),
   );
+  // 하나가 실패해도 나머지는 계속 넣고, 실패한 것은 끝에 알려줍니다.
+  const failed: string[] = [];
   for (const item of items) {
-    await Notifications.scheduleNotificationAsync({
-      identifier: item.id,
-      content: { ...reminderContent(item), data: { type: item.type, subscriptionId: item.subscription_id } },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: new Date(item.fire_at),
-        channelId: REMINDER_CHANNEL_ID,
-      },
-    });
+    try {
+      await Notifications.scheduleNotificationAsync({
+        identifier: item.id,
+        content: { ...reminderContent(item), data: { type: item.type, subscriptionId: item.subscription_id } },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: new Date(item.fire_at),
+          channelId: REMINDER_CHANNEL_ID,
+        },
+      });
+    } catch {
+      failed.push(item.id);
+    }
+  }
+  if (failed.length > 0) {
+    throw new Error(`알림 ${failed.length}건을 예약하지 못했어요: ${failed.join(", ")}`);
   }
   return items.length;
 }
