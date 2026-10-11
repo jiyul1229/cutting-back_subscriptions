@@ -11,6 +11,8 @@ export default function RootLayout() {
         <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
         <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
         <Stack.Screen name="subscription/new" options={{ presentation: 'modal' }} />
+        {/* 아래 코드를 추가하여 구독 수정 페이지 라우트를 등록합니다 */}
+        <Stack.Screen name="subscription/edit" options={{ presentation: 'modal' }} />
       </Stack>
     </AppStoreProvider>
   );
