@@ -4,13 +4,14 @@ import { router } from 'expo-router';
 import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { SecondaryButton } from '@/components/ui';
 import { useAppStore } from '@/store/AppStore';
-import { colors, font, radius } from '@/theme/tokens';
+import { colors, font, radius, space } from '@/theme/tokens';
 
 const SPLASH_MS = 1200;
 
 export default function Splash() {
-  const { ready, onboarded } = useAppStore();
+  const { ready, onboarded, loadError, reload } = useAppStore();
 
   useEffect(() => {
     if (!ready) return;
@@ -29,7 +30,14 @@ export default function Splash() {
         <Text style={styles.brand}>KooD</Text>
         <Text style={font.body}>가벼워지는 구독 생활에 오신 걸 환영해요</Text>
       </View>
-      <Text style={[font.caption, styles.footer]}>구독 다이어트</Text>
+      {loadError ? (
+        <View style={styles.error}>
+          <Text style={[font.body, styles.errorText]}>{loadError}</Text>
+          <SecondaryButton title="다시 시도" onPress={reload} />
+        </View>
+      ) : (
+        <Text style={[font.caption, styles.footer]}>구독 다이어트</Text>
+      )}
     </SafeAreaView>
   );
 }
@@ -52,4 +60,6 @@ const styles = StyleSheet.create({
   },
   brand: { fontSize: 36, fontWeight: '800', color: colors.text, marginTop: 20, marginBottom: 12 },
   footer: { textAlign: 'center', marginBottom: 24 },
+  error: { paddingHorizontal: space.xl, marginBottom: space.xxl, gap: space.md },
+  errorText: { textAlign: 'center' },
 });
