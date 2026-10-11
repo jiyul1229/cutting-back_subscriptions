@@ -1,0 +1,6 @@
+fastapi>=0.115,<1.0
+uvicorn>=0.30,<1.0
+SQLAlchemy>=2.0,<3.0
+pydantic>=2.0,<3.0
+# Optional: only used when MEMO_ANALYSIS=ai (memo analysis with Claude)
+anthropic>=1.11,<2
