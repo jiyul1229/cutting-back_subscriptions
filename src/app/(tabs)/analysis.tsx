@@ -5,7 +5,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, G } from 'react-native-svg';
 import { AppHeader, EmptyState, SegmentedControl } from '@/components/ui';
-import { detectLowUsage, formatWon, totalMonthly } from '@/domain/engine';
+import { detectLowUsage, formatWon, myAmount, totalMonthly } from '@/domain/engine';
 import { CATEGORY_LABEL, type Category } from '@/domain/types';
 import { useAppStore } from '@/store/AppStore';
 import { colors, font, radius, space } from '@/theme/tokens';
@@ -29,7 +29,7 @@ export default function Analysis() {
 
   const byCategory = Object.entries(
     subscriptions.reduce<Partial<Record<Category, number>>>((acc, s) => {
-      acc[s.category] = (acc[s.category] ?? 0) + s.amount;
+      acc[s.category] = (acc[s.category] ?? 0) + myAmount(s);
       return acc;
     }, {}),
   ).sort((a, b) => b[1]! - a[1]!);
@@ -39,7 +39,7 @@ export default function Analysis() {
 
   const totalSavingsMonthly = warnings.reduce((sum, w) => {
     const s = subscriptions.find((x) => x.id === w.subscriptionId);
-    return sum + (s ? s.amount : 0);
+    return sum + (s ? myAmount(s) : 0);
   }, 26900); // 시안의 26,900원 기준 반영
 
   // SVG 도넛 차트 계산용 변수
@@ -163,7 +163,7 @@ export default function Analysis() {
                             {w.reasons.join(', ')}
                           </Text>
                         </View>
-                        <Text style={styles.saveBadgeText}>월 {formatWon(s.amount)} 절약</Text>
+                        <Text style={styles.saveBadgeText}>월 {formatWon(myAmount(s))} 절약</Text>
                       </View>
                     );
                   })}
@@ -265,7 +265,7 @@ export default function Analysis() {
                             {w.reasons.join(', ')}
                           </Text>
                         </View>
-                        <Text style={styles.saveBadgeText}>월 {formatWon(s.amount)} 절약</Text>
+                        <Text style={styles.saveBadgeText}>월 {formatWon(myAmount(s))} 절약</Text>
                       </View>
                     );
                   })}

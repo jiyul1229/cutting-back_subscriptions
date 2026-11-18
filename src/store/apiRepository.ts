@@ -58,10 +58,30 @@ async function saveShowSavings(id: string, value: boolean) {
   await writeJson(SHOW_SAVINGS_KEY, { ...(await loadShowSavings()), [id]: value });
 }
 
+// splitCount(같이 나눠 내는 인원)도 서버에 아직 필드가 없어 기기에만 저장한다.
+const SPLIT_COUNT_KEY = 'kood/api/splitCount';
+type SplitCountMap = Record<string, number>;
+const loadSplitCounts = () => readJson<SplitCountMap>(SPLIT_COUNT_KEY, {});
+async function saveSplitCount(id: string, value: number | undefined) {
+  const map = await loadSplitCounts();
+  if (value && value > 1) map[id] = value;
+  else delete map[id];
+  await writeJson(SPLIT_COUNT_KEY, map);
+}
+
+interface DeviceOnly {
+  showSavings: ShowSavingsMap;
+  splitCounts: SplitCountMap;
+}
+const loadDeviceOnly = async (): Promise<DeviceOnly> => {
+  const [showSavings, splitCounts] = await Promise.all([loadShowSavings(), loadSplitCounts()]);
+  return { showSavings, splitCounts };
+};
+
 const isCategory = (v: string | null): v is Category =>
   v !== null && Object.prototype.hasOwnProperty.call(CATEGORY_LABEL, v);
 
-function toSubscription(dto: SubscriptionDto, showSavings: ShowSavingsMap): Subscription {
+function toSubscription(dto: SubscriptionDto, local: DeviceOnly): Subscription {
   const id = String(dto.id);
   return {
     id,
@@ -73,8 +93,9 @@ function toSubscription(dto: SubscriptionDto, showSavings: ShowSavingsMap): Subs
     billingMonth: dto.billing_month ?? undefined,
     category: isCategory(dto.category) ? dto.category : 'etc',
     memo: dto.memo ?? '',
-    showSavings: showSavings[id] ?? true,
+    showSavings: local.showSavings[id] ?? true,
     trackUsage: dto.track_usage,
+    splitCount: local.splitCounts[id],
     decision: dto.latest_decision ?? 'none',
     createdAt: dto.created_at,
   };
@@ -139,15 +160,15 @@ export function createApiRepository(baseUrl: string): Repository {
   }
 
   const fetchSubscription = async (id: string) =>
-    toSubscription(await request<SubscriptionDto>('GET', `/api/subscriptions/${id}`), await loadShowSavings());
+    toSubscription(await request<SubscriptionDto>('GET', `/api/subscriptions/${id}`), await loadDeviceOnly());
 
   return {
     async loadSubscriptions() {
-      const [dtos, showSavings] = await Promise.all([
+      const [dtos, local] = await Promise.all([
         request<SubscriptionDto[]>('GET', '/api/subscriptions'),
-        loadShowSavings(),
+        loadDeviceOnly(),
       ]);
-      return dtos.map((d) => toSubscription(d, showSavings));
+      return dtos.map((d) => toSubscription(d, local));
     },
 
     async loadUsageLogs(subs) {
@@ -169,7 +190,8 @@ export function createApiRepository(baseUrl: string): Repository {
         track_usage: input.trackUsage,
       });
       await saveShowSavings(String(dto.id), input.showSavings);
-      return toSubscription(dto, { [dto.id]: input.showSavings });
+      await saveSplitCount(String(dto.id), input.splitCount);
+      return toSubscription(dto, await loadDeviceOnly());
     },
 
     async updateSubscription(current, patch) {
@@ -181,10 +203,11 @@ export function createApiRepository(baseUrl: string): Repository {
         });
       }
       if ('showSavings' in patch) await saveShowSavings(current.id, next.showSavings);
+      if ('splitCount' in patch) await saveSplitCount(current.id, next.splitCount);
       const body = toSubscriptionBody(next, patch);
       if (Object.keys(body).length === 0) return fetchSubscription(current.id);
       const dto = await request<SubscriptionDto>('PATCH', `/api/subscriptions/${current.id}`, body);
-      return toSubscription(dto, await loadShowSavings());
+      return toSubscription(dto, await loadDeviceOnly());
     },
 
     async removeSubscription(id) {
@@ -201,7 +224,7 @@ export function createApiRepository(baseUrl: string): Repository {
 
     async resetData() {
       await request('POST', '/api/settings/reset-data', { confirm: true });
-      await writeJson(SHOW_SAVINGS_KEY, {});
+      await Promise.all([writeJson(SHOW_SAVINGS_KEY, {}), writeJson(SPLIT_COUNT_KEY, {})]);
     },
 
     async getSettings() {

@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppHeader } from '@/components/ui';
-import { billingsInMonth, cancelWindow, formatWon } from '@/domain/engine';
+import { billingsInMonth, cancelWindow, formatWon, myAmount } from '@/domain/engine';
 import { useAppStore } from '@/store/AppStore';
 import { colors, font, radius, space } from '@/theme/tokens';
 
@@ -53,7 +53,7 @@ export default function CalendarScreen() {
     : [...billings.entries()]
         .sort((a, b) => a[0] - b[0])
         .flatMap(([day, subs]) => subs.map((s) => ({ s, day })));
-  const monthTotal = [...billings.values()].flat().reduce((sum, s) => sum + s.amount, 0);
+  const monthTotal = [...billings.values()].flat().reduce((sum, s) => sum + myAmount(s), 0);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -162,7 +162,7 @@ export default function CalendarScreen() {
                       {w.end.getDate()}
                     </Text>
                   </View>
-                  <Text style={font.label}>{formatWon(s.amount)}</Text>
+                  <Text style={font.label}>{formatWon(myAmount(s))}</Text>
                 </View>
               );
             })}

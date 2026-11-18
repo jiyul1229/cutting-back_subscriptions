@@ -5,7 +5,7 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SubscriptionDetailModal } from '@/components/SubscriptionDetailModal';
 import { AppHeader, EmptyState } from '@/components/ui';
-import { formatWon, nextBillingDate, totalMonthly, usageCount } from '@/domain/engine';
+import { formatWon, myAmount, nextBillingDate, splitCountOf, totalMonthly, usageCount } from '@/domain/engine';
 import { type Category, type Subscription } from '@/domain/types';
 import { useAppStore } from '@/store/AppStore';
 import { colors, font, radius, space } from '@/theme/tokens';
@@ -72,7 +72,7 @@ export default function Home() {
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.alertPrice}>{formatWon(nearestSub.amount)}</Text>
+                  <Text style={styles.alertPrice}>{formatWon(myAmount(nearestSub))}</Text>
                 </Pressable>
               )}
 
@@ -111,7 +111,13 @@ export default function Home() {
                 </View>
 
                 <View style={{ alignItems: 'flex-end', marginRight: space.sm }}>
-                  <Text style={font.label}>{formatWon(item.amount)}</Text>
+                  <Text style={font.label}>{formatWon(myAmount(item))}</Text>
+                  {/* 같이 쓰는 구독: 내 몫을 크게, 총액·인원은 작게 */}
+                  {splitCountOf(item) > 1 && (
+                    <Text style={[font.caption, { marginTop: 2 }]}>
+                      {formatWon(item.amount)} · {splitCountOf(item)}명
+                    </Text>
+                  )}
                 </View>
                 {/* PRD F2: 원탭 체크인 — 누르면 오늘 이용 1회 기록 */}
                 {item.trackUsage ? (

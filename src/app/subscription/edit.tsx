@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { SplitField } from '@/components/SplitField';
 import { Chip, FormField, Input, PrimaryButton, SecondaryButton, SegmentedControl } from '@/components/ui';
 import { CATEGORY_LABEL, type BillingCycle, type Category } from '@/domain/types';
 import { useAppStore } from '@/store/AppStore';
@@ -27,6 +28,7 @@ export default function EditSubscription() {
 	const [category, setCategory] = useState<Category>(targetSub?.category ?? 'ott');
 	const [showSavings, setShowSavings] = useState(targetSub?.showSavings ?? true);
 	const [trackUsage, setTrackUsage] = useState(targetSub?.trackUsage ?? true);
+	const [splitCount, setSplitCount] = useState(targetSub?.splitCount ?? 1);
 	const [picker, setPicker] = useState<null | 'day' | 'month'>(null);
 
 	const amountNum = Number(amount.replace(/[^0-9]/g, ''));
@@ -45,6 +47,7 @@ export default function EditSubscription() {
 			memo,
 			showSavings,
 			trackUsage,
+			splitCount: splitCount > 1 ? splitCount : undefined,
 		});
 		router.back();
 	};
@@ -74,6 +77,10 @@ export default function EditSubscription() {
 						placeholder="17,000원"
 						keyboardType="number-pad"
 					/>
+				</FormField>
+
+				<FormField label="같이 쓰기">
+					<SplitField value={splitCount} onChange={setSplitCount} amount={amountNum} />
 				</FormField>
 
 				<FormField label="결제 주기">

@@ -5,9 +5,19 @@ import type { AppNotification, LowUsageWarning, Settings, Subscription, UsageLog
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** 월 환산 금액 */
+/** 나눠 내는 인원(나 포함). 값이 없던 예전 데이터는 혼자 쓰는 것으로 본다 */
+export function splitCountOf(s: Subscription): number {
+  return Math.max(1, Math.floor(s.splitCount ?? 1));
+}
+
+/** 1회 결제 금액 중 내 몫. 총액·분석·이용 단가는 모두 이 금액 기준이다 */
+export function myAmount(s: Subscription): number {
+  return Math.round(s.amount / splitCountOf(s));
+}
+
+/** 월 환산 금액 (내 몫 기준) */
 export function monthlyAmount(s: Subscription): number {
-  return s.cycle === 'yearly' ? Math.round(s.amount / 12) : s.amount;
+  return s.cycle === 'yearly' ? Math.round(myAmount(s) / 12) : myAmount(s);
 }
 
 export function totalMonthly(subs: Subscription[]): number {
@@ -16,7 +26,7 @@ export function totalMonthly(subs: Subscription[]): number {
 
 export function totalYearly(subs: Subscription[]): number {
   return subs.reduce(
-    (sum, s) => sum + (s.cycle === 'yearly' ? s.amount : s.amount * 12),
+    (sum, s) => sum + (s.cycle === 'yearly' ? myAmount(s) : myAmount(s) * 12),
     0,
   );
 }
@@ -153,7 +163,10 @@ export function buildNotifications(
           kind: 'billing',
           subscriptionId: s.id,
           title: dDay === 0 ? `오늘 ${s.name} 결제일이에요` : `${s.name} 결제 D-${dDay}`,
-          body: `${formatWon(s.amount)}이 결제될 예정이에요.`,
+          body:
+            splitCountOf(s) > 1
+              ? `${formatWon(s.amount)}이 결제될 예정이에요. (${splitCountOf(s)}명 · 내 몫 ${formatWon(myAmount(s))})`
+              : `${formatWon(s.amount)}이 결제될 예정이에요.`,
           date: t.toISOString(),
         });
       } else if (t >= w.start && t <= w.end) {

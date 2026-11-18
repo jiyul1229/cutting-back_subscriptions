@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { SplitField } from '@/components/SplitField';
 import { Chip, FormField, Input, PrimaryButton, SecondaryButton, SegmentedControl } from '@/components/ui';
 import { CATEGORY_LABEL, type BillingCycle, type Category } from '@/domain/types';
 import { useAppStore } from '@/store/AppStore';
@@ -22,6 +23,7 @@ export default function NewSubscription() {
   const [category, setCategory] = useState<Category>('ott');
   const [showSavings, setShowSavings] = useState(true);
   const [trackUsage, setTrackUsage] = useState(true);
+  const [splitCount, setSplitCount] = useState(1);
   const [picker, setPicker] = useState<null | 'day' | 'month'>(null);
 
   const amountNum = Number(amount.replace(/[^0-9]/g, ''));
@@ -39,6 +41,7 @@ export default function NewSubscription() {
       memo,
       showSavings,
       trackUsage,
+      splitCount: splitCount > 1 ? splitCount : undefined,
     });
     router.back();
   };
@@ -67,6 +70,11 @@ export default function NewSubscription() {
             placeholder="17,000원"
             keyboardType="number-pad"
           />
+        </FormField>
+
+        {/* 시안에 없음: 가족·친구와 나눠 내는 구독은 내 몫만 총액·분석에 반영한다 */}
+        <FormField label="같이 쓰기">
+          <SplitField value={splitCount} onChange={setSplitCount} amount={amountNum} />
         </FormField>
 
         {/* 시안에 없음: 연 결제 구독을 위해 추가 */}

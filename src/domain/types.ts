@@ -41,6 +41,8 @@ export interface Subscription {
   showSavings: boolean;
   /** 이용 빈도 경고 대상 여부 (보험료 등은 false — PRD 예외 흐름) */
   trackUsage: boolean;
+  /** 같이 결제를 나누는 인원(나 포함). 없거나 1이면 혼자 쓰는 구독 */
+  splitCount?: number;
   decision: Decision;
   createdAt: string; // ISO
 }

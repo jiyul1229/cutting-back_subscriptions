@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Input } from '@/components/ui';
-import { formatWon, nextBillingDate, usageSummary } from '@/domain/engine';
+import { formatWon, myAmount, nextBillingDate, splitCountOf, usageSummary } from '@/domain/engine';
 import { type Category, type Subscription } from '@/domain/types';
 import { useAppStore } from '@/store/AppStore';
 import { colors, font, radius, space } from '@/theme/tokens';
@@ -67,7 +67,12 @@ export function SubscriptionDetailModal({ visible, subscription, onClose, onDele
 
           <Text style={styles.subName}>{subscription.name}</Text>
           <Text style={styles.subMemo}>{subscription.memo || '나만의 메모 추가'}</Text>
-          <Text style={styles.subPrice}>{formatWon(subscription.amount)} / 월</Text>
+          <Text style={styles.subPrice}>{formatWon(myAmount(subscription))} / 월</Text>
+          {splitCountOf(subscription) > 1 && (
+            <Text style={[font.caption, { textAlign: 'center', marginTop: -space.sm, marginBottom: space.md }]}>
+              {formatWon(subscription.amount)}을 {splitCountOf(subscription)}명이 나눠 내요
+            </Text>
+          )}
 
           <View style={styles.infoBox}>
             <View style={styles.infoRow}>
