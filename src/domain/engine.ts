@@ -62,6 +62,20 @@ export function usageCount(
   ).length;
 }
 
+/** PRD F2: 화면에 보여줄 이용 횟수 요약 (최근 30일·90일, 마지막 이용일) */
+export function usageSummary(logs: UsageLog[], subscriptionId: string, today = new Date()) {
+  const mine = logs
+    .filter((l) => l.subscriptionId === subscriptionId)
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  return {
+    last30: usageCount(mine, subscriptionId, 30, today),
+    last90: usageCount(mine, subscriptionId, 90, today),
+    lastAt: mine[0] ? new Date(mine[0].at) : null,
+    /** 최신순 */
+    logs: mine,
+  };
+}
+
 // TODO(코어 엔진): 메모 텍스트 부정 신호 분석(LLM/키워드), F6 민감도 조정 반영
 const NEGATIVE_KEYWORDS = ['안 봄', '안봄', '재미없', '안 씀', '안씀', '해지'];
 

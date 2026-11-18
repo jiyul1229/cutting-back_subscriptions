@@ -26,7 +26,6 @@ export default function TabsLayout() {
       <Tabs.Screen name="calendar" options={{ title: '캘린더', tabBarIcon: icon('calendar') }} />
       <Tabs.Screen name="analysis" options={{ title: '분석', tabBarIcon: icon('bar-chart-2') }} />
       <Tabs.Screen name="settings" options={{ title: '설정', tabBarIcon: icon('settings') }} />
-      <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
   );
 }

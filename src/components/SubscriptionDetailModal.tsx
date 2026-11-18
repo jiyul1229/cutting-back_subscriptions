@@ -1,10 +1,14 @@
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import { formatWon, nextBillingDate } from '@/domain/engine';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Input } from '@/components/ui';
+import { formatWon, nextBillingDate, usageSummary } from '@/domain/engine';
 import { type Category, type Subscription } from '@/domain/types';
+import { useAppStore } from '@/store/AppStore';
 import { colors, font, radius, space } from '@/theme/tokens';
+
+const md = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
 
 const CATEGORY_COLORS: Record<Category | 'learning' | 'study', { bg: string; text: string }> = {
   ott: { bg: '#FFE5E6', text: '#E50914' },
@@ -30,15 +34,25 @@ export function SubscriptionDetailModal({ visible, subscription, onClose, onDele
   // 시안에 맞춰 스위치 상태 관리 (필요 시 추후 스토어 업데이트와 연동 가능)
   const [showSavings, setShowSavings] = useState(subscription?.showSavings ?? true);
   const [billingAlert, setBillingAlert] = useState(true);
+  const { usageLogs, checkIn } = useAppStore();
+  const [note, setNote] = useState('');
 
   if (!subscription) return null;
 
   const catStyle = CATEGORY_COLORS[subscription.category] || { bg: colors.primarySoft, text: colors.primary };
   const nextDate = nextBillingDate(subscription);
+  const usage = usageSummary(usageLogs, subscription.id);
+
+  // PRD F2: 메모와 함께 직접 기록 (메모는 비워도 돼요)
+  const recordWithNote = async () => {
+    await checkIn(subscription.id, note.trim() || undefined);
+    setNote('');
+  };
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       {/* 어두운 배경 누르면 닫히기 */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* 모달 내부 클릭 시 닫힘 방지 */}
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
@@ -93,6 +107,44 @@ export function SubscriptionDetailModal({ visible, subscription, onClose, onDele
             </View>
           </View>
 
+          {/* PRD F2: 이용 기록 — 이용 횟수 표시 + 직접 입력 */}
+          {subscription.trackUsage && (
+            <View style={styles.usageBox}>
+              <View style={styles.usageStats}>
+                <View style={styles.usageStat}>
+                  <Text style={styles.usageNum}>{usage.last30}회</Text>
+                  <Text style={font.caption}>최근 30일</Text>
+                </View>
+                <View style={styles.usageStat}>
+                  <Text style={styles.usageNum}>{usage.last90}회</Text>
+                  <Text style={font.caption}>최근 90일</Text>
+                </View>
+                <View style={styles.usageStat}>
+                  <Text style={styles.usageNum}>{usage.lastAt ? md(usage.lastAt) : '-'}</Text>
+                  <Text style={font.caption}>마지막 이용</Text>
+                </View>
+              </View>
+              <View style={styles.noteRow}>
+                <Input
+                  value={note}
+                  onChangeText={setNote}
+                  placeholder="메모 (예: 영화 1편 봤어요)"
+                  style={{ flex: 1, paddingVertical: 10, backgroundColor: colors.bg }}
+                  returnKeyType="done"
+                  onSubmitEditing={recordWithNote}
+                />
+                <Pressable style={styles.recordBtn} onPress={recordWithNote}>
+                  <Text style={styles.recordBtnText}>오늘 썼어요</Text>
+                </Pressable>
+              </View>
+              {usage.logs.slice(0, 3).map((l) => (
+                <Text key={l.id} style={font.caption} numberOfLines={1}>
+                  {md(new Date(l.at))} · {l.note || '메모 없음'}
+                </Text>
+              ))}
+            </View>
+          )}
+
           {/* 하단 버튼 영역 */}
           <View style={styles.buttonRow}>
             <Pressable
@@ -113,6 +165,7 @@ export function SubscriptionDetailModal({ visible, subscription, onClose, onDele
           </View>
         </Pressable>
       </Pressable>
+      </KeyboardAvoidingView>
 
       {/* 삭제 확인 경고 팝업 */}
       <Modal visible={showDeleteConfirm} transparent animationType="fade">
@@ -163,6 +216,13 @@ const styles = StyleSheet.create({
   switchItem: { flexDirection: 'row', alignItems: 'center', gap: space.sm, flex: 1, justifyContent: 'space-between' },
   switchDivider: { width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: space.md },
 
+  usageBox: { width: '100%', borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: space.lg, gap: space.md, marginBottom: space.xl },
+  usageStats: { flexDirection: 'row' },
+  usageStat: { flex: 1, alignItems: 'center', gap: 2 },
+  usageNum: { fontSize: 16, fontWeight: '800', color: colors.primary },
+  noteRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  recordBtn: { backgroundColor: colors.primary, paddingHorizontal: space.md, paddingVertical: 12, borderRadius: radius.md },
+  recordBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   buttonRow: { flexDirection: 'row', gap: space.md, width: '100%', marginBottom: space.md },
   editButton: { flex: 1, backgroundColor: colors.primarySoft, paddingVertical: 14, borderRadius: radius.md, alignItems: 'center' },
   editText: { color: colors.primary, fontWeight: '700', fontSize: 15 },

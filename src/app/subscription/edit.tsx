@@ -26,6 +26,7 @@ export default function EditSubscription() {
 	const [memo, setMemo] = useState(targetSub?.memo ?? '');
 	const [category, setCategory] = useState<Category>(targetSub?.category ?? 'ott');
 	const [showSavings, setShowSavings] = useState(targetSub?.showSavings ?? true);
+	const [trackUsage, setTrackUsage] = useState(targetSub?.trackUsage ?? true);
 	const [picker, setPicker] = useState<null | 'day' | 'month'>(null);
 
 	const amountNum = Number(amount.replace(/[^0-9]/g, ''));
@@ -43,6 +44,7 @@ export default function EditSubscription() {
 			category,
 			memo,
 			showSavings,
+			trackUsage,
 		});
 		router.back();
 	};
@@ -121,6 +123,22 @@ export default function EditSubscription() {
 					<Switch
 						value={showSavings}
 						onValueChange={setShowSavings}
+						trackColor={{ true: colors.primary, false: colors.border }}
+						thumbColor="#fff"
+						{...({ activeThumbColor: '#fff' } as object)}
+					/>
+				</View>
+
+				{/* PRD F2 예외 흐름: 보험료·통신비처럼 '쓴다'는 개념이 없는 항목은 끈다 */}
+				<View style={[styles.savings, { marginTop: space.md }]}>
+					<Feather name="check-circle" size={18} color={colors.primary} />
+					<View style={{ flex: 1, marginHorizontal: space.md }}>
+						<Text style={[font.label, { fontSize: 12 }]}>이용 횟수 기록하기</Text>
+						<Text style={[font.caption, { fontSize: 11 }]}>홈에서 '썼어요'를 눌러 이용 횟수를 기록해요.</Text>
+					</View>
+					<Switch
+						value={trackUsage}
+						onValueChange={setTrackUsage}
 						trackColor={{ true: colors.primary, false: colors.border }}
 						thumbColor="#fff"
 						{...({ activeThumbColor: '#fff' } as object)}

@@ -5,7 +5,7 @@ import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SubscriptionDetailModal } from '@/components/SubscriptionDetailModal';
 import { AppHeader, EmptyState } from '@/components/ui';
-import { formatWon, nextBillingDate, totalMonthly } from '@/domain/engine';
+import { formatWon, nextBillingDate, totalMonthly, usageCount } from '@/domain/engine';
 import { type Category, type Subscription } from '@/domain/types';
 import { useAppStore } from '@/store/AppStore';
 import { colors, font, radius, space } from '@/theme/tokens';
@@ -21,7 +21,7 @@ const CATEGORY_COLORS: Record<Category, { bg: string; text: string }> = {
 };
 
 export default function Home() {
-  const { subscriptions, removeSubscription } = useAppStore();
+  const { subscriptions, usageLogs, removeSubscription, checkIn } = useAppStore();
   const [selectedSub, setSelectedSub] = useState<Subscription | null>(null);
   
   const goAdd = () => router.push('/subscription/new');
@@ -102,12 +102,30 @@ export default function Home() {
                       ? `결제일: 매월 ${item.billingDay}일` 
                       : `결제일: 매년 ${item.billingMonth}월 ${item.billingDay}일`}
                   </Text>
+                  {/* PRD F2: 이용 횟수 표시 */}
+                  {item.trackUsage && (
+                    <Text style={[font.caption, styles.usageText]}>
+                      최근 30일 {usageCount(usageLogs, item.id, 30)}회 이용
+                    </Text>
+                  )}
                 </View>
 
                 <View style={{ alignItems: 'flex-end', marginRight: space.sm }}>
                   <Text style={font.label}>{formatWon(item.amount)}</Text>
                 </View>
-                <Feather name="chevron-right" size={16} color={colors.textSub} />
+                {/* PRD F2: 원탭 체크인 — 누르면 오늘 이용 1회 기록 */}
+                {item.trackUsage ? (
+                  <Pressable
+                    onPress={() => checkIn(item.id)}
+                    hitSlop={6}
+                    style={({ pressed }) => [styles.checkInBtn, pressed && { opacity: 0.6 }]}
+                  >
+                    <Feather name="check" size={14} color={colors.primary} />
+                    <Text style={styles.checkInText}>썼어요</Text>
+                  </Pressable>
+                ) : (
+                  <Feather name="chevron-right" size={16} color={colors.textSub} />
+                )}
               </Pressable>
             );
           }}
@@ -146,4 +164,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', padding: space.lg, borderRadius: radius.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   itemIconBox: { width: 40, height: 40, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
   itemIconText: { fontWeight: '800', fontSize: 16 },
+  usageText: { marginTop: 2, color: colors.primary },
+  checkInBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.primarySoft },
+  checkInText: { fontSize: 12, fontWeight: '700', color: colors.primary },
 });

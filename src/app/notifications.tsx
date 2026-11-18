@@ -1,9 +1,9 @@
-// 알림 — 헤더 종 아이콘으로 진입. 탭바에는 노출하지 않음 (_layout에서 href: null)
+// 알림 — 헤더 종 아이콘으로 진입하는 스택 화면 (탭 밖에 두어야 뒤로가기가 자연스러움)
 import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import type { ComponentProps } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AppHeader } from '@/components/ui';
 import { buildNotifications } from '@/domain/engine';
 import type { NotificationKind } from '@/domain/types';
 import { useAppStore } from '@/store/AppStore';
@@ -22,8 +22,14 @@ export default function Notifications() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <AppHeader />
-      
+      <View style={styles.header}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))} hitSlop={10}>
+          <Feather name="arrow-left" size={20} color={colors.text} />
+        </Pressable>
+        <Text style={font.heading}>알림</Text>
+        <View style={{ width: 20 }} />
+      </View>
+
       {items.length === 0 ? (
         <View style={styles.empty}>
           <View style={styles.emptyIcon}>
@@ -36,7 +42,6 @@ export default function Notifications() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
-          <Text style={[font.title, { marginBottom: space.sm }]}>알림</Text>
           {items.map((n) => {
             const isBilling = n.kind === 'billing';
 
@@ -67,6 +72,13 @@ export default function Notifications() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: space.xl,
+    paddingVertical: space.md,
+  },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 40, paddingHorizontal: space.xl },
   emptyIcon: {
     width: 78,
